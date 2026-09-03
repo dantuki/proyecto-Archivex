@@ -1,34 +1,94 @@
 const jwt = require('jsonwebtoken');
 
-const verificarToken = (req, res, next) => {
-  // 1. Obtener el token del encabezado Authorization
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Formato "Bearer TOKEN"
+/**
+ * Secret obligatorio para firmar y verificar JWT.
+ *
+ * Nunca utilizamos un valor por defecto o hardcodeado.
+ * Si JWT_SECRET no existe, la aplicación debe fallar de forma segura.
+ */
+const JWT_SECRET = process.env.JWT_SECRET;
 
-  // CORRECCIÓN CRÍTICA: Evita que los strings de JS "null", "undefined" o vacíos pasen como tokens reales
-  if (!token || token === 'null' || token === 'undefined' || token === '') {
-    return res.status(401).json({ 
-      status: "error", 
-      message: "Acceso denegado: No se proporcionó un token de sesión válido" 
+if (!JWT_SECRET || JWT_SECRET.trim().length < 32) {
+  throw new Error(
+    'JWT_SECRET no está definido o es demasiado corto. ' +
+    'Configura una variable JWT_SECRET segura en backend/.env.'
+  );
+}
+
+/**
+ * Middleware de autenticación.
+ *
+ * Obtiene el token exclusivamente desde:
+ * Authorization: Bearer <token>
+ *
+ * Si el token es válido, construye req.user utilizando
+ * únicamente la información firmada dentro del JWT.
+ */
+const verificarToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    return res.status(401).json({
+      status: 'error',
+      message: 'No autenticado: se requiere un token de acceso.'
+    });
+  }
+
+  const partes = authHeader.trim().split(/\s+/);
+
+  if (partes.length !== 2 || partes[0].toLowerCase() !== 'bearer') {
+    return res.status(401).json({
+      status: 'error',
+      message: 'Formato de autorización inválido.'
+    });
+  }
+
+  const token = partes[1];
+
+  if (
+    !token ||
+    token === 'null' ||
+    token === 'undefined'
+  ) {
+    return res.status(401).json({
+      status: 'error',
+      message: 'No autenticado: token inválido.'
     });
   }
 
   try {
-    // 2. Verificar el token usando la clave secreta
-    const verified = jwt.verify(token, process.env.JWT_SECRET || 'secret_archivex_2026');
-    
-    // Normalizamos el payload para asegurar que req.user siempre contenga 'id' y 'rol' de forma consistente
+    const verified = jwt.verify(token, JWT_SECRET, {
+      algorithms: ['HS256']
+    });
+
+    if (!verified || (!verified.id && !verified.sub)) {
+      return res.status(401).json({
+        status: 'error',
+        message: 'Token inválido: identidad ausente.'
+      });
+    }
+
+    const usuarioId = verified.id ?? verified.sub;
+    const rol = verified.rol ?? verified.role;
+
+    if (!rol) {
+      return res.status(401).json({
+        status: 'error',
+        message: 'Token inválido: rol ausente.'
+      });
+    }
+
     req.user = {
       ...verified,
-      id: verified.id || verified.sub,
-      rol: verified.rol || verified.role || 'Docente'
+      id: usuarioId,
+      rol
     };
-    
-    next(); 
+
+    next();
   } catch (error) {
-    return res.status(403).json({ 
-      status: "error", 
-      message: "Token inválido o expirado" 
+    return res.status(401).json({
+      status: 'error',
+      message: 'Token inválido o expirado.'
     });
   }
 };

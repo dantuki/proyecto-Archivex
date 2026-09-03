@@ -1,39 +1,258 @@
 const express = require('express');
-const router = express.Router();
-const ctrl = require('../controllers/usuarioController');
 const multer = require('multer');
-const path = require('path');
 
-// Configuración de almacenamiento local de Multer
+const router = express.Router();
+
+const ctrl = require('../controllers/usuarioController');
+
+const verificarToken = require('../middleware/authMiddleware');
+const { requireRole } = require('../middleware/roleMiddleware');
+
+const {
+  validarFirmasPostSubida
+} = require('../middleware/secureUpload');
+
+const {
+  PUBLIC_DIR,
+  PRIVATE_DIR
+} = require('../config/uploadPaths');
+
+// ============================================================
+// TIPOS DE ARCHIVO PERMITIDOS
+// ============================================================
+//
+// FOTO:
+// - PNG
+// - JPEG/JPG
+//
+// CERTIFICADO:
+// - PDF
+//
+// La extensión física siempre es generada por el servidor.
+// Nunca se utiliza path.extname(file.originalname).
+// ============================================================
+
+const MIME_EXT_FOTO = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg'
+};
+
+const MIME_EXT_CERT = {
+  'application/pdf': '.pdf'
+};
+
+// ============================================================
+// STORAGE
+// ============================================================
+//
+// Foto:
+//   pública
+//
+// Certificado:
+//   privado
+//
+// Esto evita servir certificados mediante /uploads.
+// ============================================================
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/'); 
+    if (file.fieldname === 'certificado') {
+      return cb(null, PRIVATE_DIR);
+    }
+
+    return cb(null, PUBLIC_DIR);
   },
+
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`);
+    const mapa =
+      file.fieldname === 'certificado'
+        ? MIME_EXT_CERT
+        : MIME_EXT_FOTO;
+
+    const extension = mapa[file.mimetype];
+
+    if (!extension) {
+      return cb(
+        new Error('Tipo de archivo no permitido.')
+      );
+    }
+
+    const uniqueSuffix =
+      Date.now() +
+      '-' +
+      Math.round(Math.random() * 1e9);
+
+    return cb(
+      null,
+      `${file.fieldname}-${uniqueSuffix}${extension}`
+    );
   }
 });
 
-const upload = multer({ storage });
+// ============================================================
+// FILE FILTER
+// ============================================================
 
-// Rutas base del módulo de usuarios
-router.get('/', ctrl.getUsuarios);
+const fileFilter = (req, file, cb) => {
 
-// CORRECCIÓN: Colocar la ruta específica '/evaluadores' ANTES de la ruta dinámica '/:id'
-router.get('/evaluadores', ctrl.getEvaluadores); 
+  // ----------------------------------------------------------
+  // FOTO
+  // ----------------------------------------------------------
 
-router.get('/:id', ctrl.getUsuarioById);
-router.post('/registro', ctrl.registrarUsuario);
+  if (file.fieldname === 'foto') {
+    if (MIME_EXT_FOTO[file.mimetype]) {
+      return cb(null, true);
+    }
 
-// Interceptamos la subida de múltiples archivos binarios
-router.put('/:id', upload.fields([
-  { name: 'foto', maxCount: 1 },
-  { name: 'certificado', maxCount: 1 }
-]), ctrl.updateUsuario);
+    return cb(
+      new Error(
+        'El campo "foto" solo admite imágenes PNG o JPG/JPEG.'
+      ),
+      false
+    );
+  }
 
-router.delete('/:id', ctrl.deleteUsuario);
-router.delete('/mantenimiento/purgar-todo', ctrl.limpiarTablaDesarrollo);
+  // ----------------------------------------------------------
+  // CERTIFICADO
+  // ----------------------------------------------------------
+
+  if (file.fieldname === 'certificado') {
+    if (MIME_EXT_CERT[file.mimetype]) {
+      return cb(null, true);
+    }
+
+    return cb(
+      new Error(
+        'El campo "certificado" solo admite archivos PDF.'
+      ),
+      false
+    );
+  }
+
+  return cb(
+    new Error(
+      'Campo de archivo no reconocido.'
+    ),
+    false
+  );
+};
+
+// ============================================================
+// MULTER
+// ============================================================
+
+const upload = multer({
+  storage,
+  fileFilter,
+
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 2
+  }
+});
+
+// ============================================================
+// AUTENTICACIÓN GLOBAL
+// ============================================================
+
+router.use(verificarToken);
+
+// ============================================================
+// ADMINISTRACIÓN
+// ============================================================
+
+router.get(
+  '/',
+  requireRole('Admin'),
+  ctrl.getUsuarios
+);
+
+router.get(
+  '/evaluadores',
+  requireRole('Admin'),
+  ctrl.getEvaluadores
+);
+
+router.post(
+  '/registro',
+  requireRole('Admin'),
+  ctrl.registrarUsuario
+);
+
+// ============================================================
+// PURGA DE DESARROLLO
+// ============================================================
+//
+// Debe mantenerse ANTES de /:id.
+// ============================================================
+
+router.delete(
+  '/mantenimiento/purgar-todo',
+  requireRole('Admin'),
+  ctrl.limpiarTablaDesarrollo
+);
+
+// ============================================================
+// USUARIO INDIVIDUAL
+// ============================================================
+//
+// El controller valida ownership.
+// ============================================================
+
+router.get(
+  '/:id',
+  ctrl.getUsuarioById
+);
+
+// ============================================================
+// ACTUALIZAR USUARIO
+// ============================================================
+//
+// Flujo:
+//
+// JWT
+// ↓
+// Multer
+// ↓
+// MIME permitido
+// ↓
+// límite de tamaño
+// ↓
+// magic bytes
+// ↓
+// controller
+//
+// Foto:
+//   PUBLIC_DIR
+//
+// Certificado:
+//   PRIVATE_DIR
+// ============================================================
+
+router.put(
+  '/:id',
+  upload.fields([
+    {
+      name: 'foto',
+      maxCount: 1
+    },
+    {
+      name: 'certificado',
+      maxCount: 1
+    }
+  ]),
+  validarFirmasPostSubida,
+  ctrl.updateUsuario
+);
+
+// ============================================================
+// ELIMINAR USUARIO
+// ============================================================
+
+router.delete(
+  '/:id',
+  requireRole('Admin'),
+  ctrl.deleteUsuario
+);
 
 module.exports = router;

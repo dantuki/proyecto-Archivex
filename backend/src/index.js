@@ -2,42 +2,180 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const db = require('./config/db');
-const http = require('http'); // Servidor HTTP nativo requerido para WebSockets
-const { Server } = require('socket.io'); // Instancia del servidor de Socket.io
-const Usuario = require('./models/usuarioModel'); // Modelo para consultar contactos
+const http = require('http');
+const jwt = require('jsonwebtoken');
+const { Server } = require('socket.io');
 
-// IMPORTACIÓN DE RUTAS (ArchiveX Limpio)
+const Usuario = require('./models/usuarioModel');
+const { PUBLIC_DIR } = require('./config/uploadPaths');
+
+// ============================================================
+// IMPORTACIÓN DE RUTAS
+// ============================================================
+
 const SedeRoutes = require('./routes/sedeRoutes');
 const usuarioRoutes = require('./routes/usuarioRoutes');
 const convocatoriaRoutes = require('./routes/convocatoriaRoutes');
 const solicitudRoutes = require('./routes/solicitudRoutes');
 const asignacionRoutes = require('./routes/asignacionRoutes');
-const authRoutes = require('./routes/authRoutes'); 
-const noticiaRoutes = require('./routes/noticiaRoutes'); 
+const authRoutes = require('./routes/authRoutes');
+const noticiaRoutes = require('./routes/noticiaRoutes');
 const postulacionRoutes = require('./routes/postulacionRoutes');
-const reporteRoutes = require('./routes/reporteRoutes'); // INYECCIÓN: Módulo de reportes profesionales
+const reporteRoutes = require('./routes/reporteRoutes');
+const fileRoutes = require('./routes/fileRoutes');
+
+// ============================================================
+// VARIABLES DE ENTORNO
+// ============================================================
 
 dotenv.config();
+
 const app = express();
 
-app.use(cors());
-app.use(express.json());
+// ============================================================
+// CONFIGURACIÓN CORS
+// ============================================================
+//
+// Ya no usamos:
+// cors()
+// origin: "*"
+//
+// En desarrollo se permiten solamente los hosts locales
+// habituales del frontend.
+//
+// Para producción se puede definir:
+// FRONTEND_ORIGIN=https://tu-dominio.com
+//
+// También se permiten múltiples orígenes separados por coma:
+// FRONTEND_ORIGIN=https://app1.com,https://app2.com
+// ============================================================
 
-// Servir la carpeta de archivos PDFs almacenados de forma estática
-app.use('/uploads', express.static('uploads'));
+const obtenerOrigenesPermitidos = () => {
+  const configurado = process.env.FRONTEND_ORIGIN;
 
-// Crear Servidor HTTP acoplado con Express
+  if (!configurado) {
+    return [
+      'http://localhost:5173',
+      'http://127.0.0.1:5173'
+    ];
+  }
+
+  return configurado
+    .split(',')
+    .map((origen) => origen.trim())
+    .filter(Boolean);
+};
+
+const origenesPermitidos = obtenerOrigenesPermitidos();
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Las herramientas locales como curl/postman pueden no enviar
+    // Origin. No las bloqueamos por ausencia de header.
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    if (origenesPermitidos.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(
+      new Error('Origen no permitido por la política CORS.')
+    );
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  credentials: true,
+  optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '1mb' }));
+
+// ============================================================
+// ARCHIVOS PÚBLICOS
+// ============================================================
+//
+// Solo uploads es público.
+//
+// IMPORTANTE:
+// uploads_private NO se sirve mediante express.static.
+// ============================================================
+
+app.use(
+  '/uploads',
+  express.static(PUBLIC_DIR, {
+    dotfiles: 'deny',
+    index: false
+  })
+);
+
+// ============================================================
+// SERVIDOR HTTP
+// ============================================================
+
 const server = http.createServer(app);
 
-// Inicializar Servidor Socket.io con configuración CORS abierta para desarrollo
-const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
-});
+// ============================================================
+// JWT PARA WEBSOCKETS
+// ============================================================
 
-// Verificación y Creación Automática de la Tabla de Chat en la Base de Datos
+const obtenerJwtSecret = () => {
+  const secret = process.env.JWT_SECRET;
+
+  if (!secret || secret.trim().length < 32) {
+    throw new Error(
+      'JWT_SECRET no está configurado correctamente.'
+    );
+  }
+
+  return secret;
+};
+
+/**
+ * Extrae el token enviado durante el handshake de Socket.IO.
+ *
+ * Formatos aceptados:
+ *
+ * socket.auth.token
+ *
+ * socket.auth.accessToken
+ *
+ * Authorization: Bearer <token>
+ *
+ * No aceptamos identidad de usuario enviada libremente
+ * como parte del payload de los eventos.
+ */
+const extraerTokenSocket = (socket) => {
+  const authToken =
+    socket.handshake.auth?.token ||
+    socket.handshake.auth?.accessToken;
+
+  if (
+    typeof authToken === 'string' &&
+    authToken.trim()
+  ) {
+    return authToken.trim();
+  }
+
+  const authorization =
+    socket.handshake.headers?.authorization;
+
+  if (
+    typeof authorization === 'string' &&
+    authorization.startsWith('Bearer ')
+  ) {
+    return authorization.slice(7).trim();
+  }
+
+  return null;
+};
+
+
+// ============================================================
+// TABLA DE CHAT
+// ============================================================
+
 const inicializarTablaChat = async () => {
   const queryTabla = `
     CREATE TABLE IF NOT EXISTS chat_mensajes (
@@ -46,138 +184,668 @@ const inicializarTablaChat = async () => {
       destinatario_id INT NOT NULL,
       mensaje TEXT NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (remitente_id) REFERENCES usuarios(id) ON DELETE CASCADE,
-      FOREIGN KEY (destinatario_id) REFERENCES usuarios(id) ON DELETE CASCADE
+      FOREIGN KEY (remitente_id)
+        REFERENCES usuarios(id)
+        ON DELETE CASCADE,
+      FOREIGN KEY (destinatario_id)
+        REFERENCES usuarios(id)
+        ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `;
+
   try {
     await db.query(queryTabla);
-    console.log('Tabla "chat_mensajes" verificada/creada con éxito.');
+
+    console.log(
+      'Tabla "chat_mensajes" verificada/creada con éxito.'
+    );
   } catch (error) {
-    console.error('Error al inicializar la tabla de chat:', error);
+    console.error(
+      'Error al inicializar la tabla de chat.'
+    );
   }
 };
 
+// ============================================================
+// CONEXIÓN A BASE DE DATOS
+// ============================================================
+
 db.query('SELECT 1')
   .then(() => {
-    console.log('Conexión exitosa con el motor MySQL');
-    inicializarTablaChat();
-  })
-  .catch(err => console.error('Error en la base de datos:', err));
+    console.log(
+      'Conexión exitosa con el motor MySQL'
+    );
 
-// MONTAJE DE RUTAS 
+    return inicializarTablaChat();
+  })
+  .catch(() => {
+    console.error(
+      'Error en la conexión con la base de datos.'
+    );
+  });
+
+// ============================================================
+// MONTAJE DE RUTAS
+// ============================================================
+
 app.use('/api/sedes', SedeRoutes);
 app.use('/api/usuarios', usuarioRoutes);
 app.use('/api/convocatorias', convocatoriaRoutes);
 app.use('/api/solicitudes', solicitudRoutes);
 app.use('/api/asignaciones', asignacionRoutes);
-app.use('/api/asignacion', asignacionRoutes); 
-app.use('/api/auth', authRoutes); 
-app.use('/api/noticias', noticiaRoutes); 
-app.use('/api/postulaciones', postulacionRoutes);
-app.use('/api/reportes', reporteRoutes); // INYECCIÓN: Endpoint central de descargas de ArchiveX
 
-// Manejador global para errores capturados en Express para evitar caídas
-app.use((err, req, res, next) => {
-  console.error("Error capturado globalmente:", err);
-  res.status(err.status || 500).json({
-    status: "error",
-    message: err.message || "Error interno del servidor",
-    details: err.sqlMessage || err.message || null
-  });
-});
+// Ruta antigua mantenida temporalmente por compatibilidad.
+app.use('/api/asignacion', asignacionRoutes);
+
+app.use('/api/auth', authRoutes);
+app.use('/api/noticias', noticiaRoutes);
+app.use('/api/postulaciones', postulacionRoutes);
+app.use('/api/reportes', reporteRoutes);
+app.use('/api/archivos-privados', fileRoutes);
+
+// ============================================================
+// ENDPOINT DE SALUD
+// ============================================================
 
 app.get('/', (req, res) => {
-  res.json({ mensaje: "API de ArchiveX operativa con WebSockets", estado: "Limpio" });
+  return res.status(200).json({
+    mensaje:
+      'API de ArchiveX operativa con WebSockets',
+    estado: 'Limpio'
+  });
 });
 
-// --- LÓGICA DE WEBSOCKETS (SOCKET.IO) ---
-const usuariosActivos = new Map(); // Mapa para emparejar userId -> socket.id
+// ============================================================
+// MANEJADOR GLOBAL DE ERRORES
+// ============================================================
+//
+// Nunca devolvemos:
+// - error.message
+// - error.sqlMessage
+// - detalles SQL
+// - stack trace
+//
+// al cliente.
+// ============================================================
 
-io.on('connection', (socket) => {
-  console.log(`Usuario conectado al WebSocket: ${socket.id}`);
+app.use((err, req, res, next) => {
+  console.error(
+    'Error capturado por el manejador global:',
+    err
+  );
 
-  // 1. Registro del usuario al conectar al sistema
-  socket.on('registrar_usuario', (userId) => {
-    if (userId) {
-      usuariosActivos.set(String(userId), socket.id);
-      console.log(`Usuario ID ${userId} registrado activamente en el socket ${socket.id}`);
-    }
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  const status =
+    Number.isInteger(err?.status) &&
+    err.status >= 400 &&
+    err.status < 600
+      ? err.status
+      : 500;
+
+  return res.status(status).json({
+    status: 'error',
+    message:
+      status === 500
+        ? 'Error interno del servidor.'
+        : 'La solicitud no pudo ser procesada.'
   });
+});
 
-  // 2. Obtener lista de contactos según el Rol correspondiente
-  socket.on('obtener_contactos', async (rolUsuario) => {
-    try {
-      const contactos = await Usuario.getChatContacts(rolUsuario);
-      socket.emit('lista_contactos', contactos);
-    } catch (error) {
-      socket.emit('error_chat', 'No se pudo cargar la lista de contactos.');
-    }
-  });
+// ============================================================
+// SOCKET.IO
+// ============================================================
 
-  // 3. Obtener el historial de mensajes entre dos usuarios particulares
-  socket.on('obtener_historial', async ({ remitente_id, destinatario_id }) => {
-    try {
-      const [mensajes] = await db.query(
-        `SELECT id, remitente_id, destinatario_id, mensaje, created_at 
-         FROM chat_mensajes 
-         WHERE (remitente_id = ? AND destinatario_id = ?) 
-            OR (remitente_id = ? AND destinatario_id = ?) 
-         ORDER BY created_at ASC`,
-        [remitente_id, destinatario_id, destinatario_id, remitente_id]
-      );
-      socket.emit('historial_mensajes', mensajes);
-    } catch (error) {
-      socket.emit('error_chat', 'No se pudo recuperar el historial de chat.');
-    }
-  });
-
-  // 4. Enviar e interceptar mensaje en tiempo real
-  socket.on('enviar_mensaje', async ({ remitente_id, destinatario_id, mensaje }) => {
-    if (!mensaje || !mensaje.trim()) return;
-
-    try {
-      // Guardar mensaje de manera persistentente en la BD
-      const [result] = await db.query(
-        'INSERT INTO chat_mensajes (remitente_id, destinatario_id, mensaje) VALUES (?, ?, ?)',
-        [remitente_id, destinatario_id, mensaje.trim()]
-      );
-
-      const nuevoMensaje = {
-        id: result.insertId,
-        remitente_id,
-        destinatario_id,
-        mensaje: mensaje.trim(),
-        created_at: new Date()
-      };
-
-      // Emitir confirmación inmediata al propio emisor
-      socket.emit('recibir_mensaje', nuevoMensaje);
-
-      // Verificar si el destinatario está conectado en tiempo real para despacharle el mensaje
-      const socketDestinatarioId = usuariosActivos.get(String(destinatario_id));
-      if (socketDestinatarioId) {
-        io.to(socketDestinatarioId).emit('recibir_mensaje', nuevoMensaje);
+const ioServer = new Server(server, {
+  cors: {
+    origin: (origin, callback) => {
+      if (!origin) {
+        return callback(null, true);
       }
-    } catch (error) {
-      socket.emit('error_chat', 'El mensaje no pudo ser transmitido ni guardado.');
-    }
-  });
 
-  // Limpieza del mapa al desconectarse el cliente
-  socket.on('disconnect', () => {
-    for (const [userId, socketId] of usuariosActivos.entries()) {
-      if (socketId === socket.id) {
-        usuariosActivos.delete(userId);
-        console.log(`Usuario ID ${userId} removido de las conexiones activas.`);
-        break;
+      if (origenesPermitidos.includes(origin)) {
+        return callback(null, true);
       }
-    }
-    console.log(`Conexión cerrada para el socket: ${socket.id}`);
-  });
+
+      return callback(
+        new Error(
+          'Origen no permitido por la política CORS.'
+        )
+      );
+    },
+    methods: ['GET', 'POST'],
+    credentials: true
+  },
+  maxHttpBufferSize: 1e6
 });
 
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`Servidor ArchiveX híbrido (HTTP + WebSockets) corriendo en puerto ${PORT}`);
+io = ioServer;
+
+// ============================================================
+// AUTENTICACIÓN DEL SOCKET
+// ============================================================
+
+ioServer.use((socket, next) => {
+  try {
+    const token = extraerTokenSocket(socket);
+
+    if (!token) {
+      return next(
+        new Error(
+          'No autenticado: se requiere un token de acceso.'
+        )
+      );
+    }
+
+    const jwtSecret = obtenerJwtSecret();
+
+    const payload = jwt.verify(
+      token,
+      jwtSecret,
+      {
+        algorithms: ['HS256']
+      }
+    );
+
+    const usuarioId = Number(
+      payload?.id || payload?.sub || 0
+    );
+
+    const rol = String(
+      payload?.rol || payload?.role || ''
+    ).trim();
+
+    if (!usuarioId || !rol) {
+      return next(
+        new Error(
+          'Token WebSocket inválido.'
+        )
+      );
+    }
+
+    // La identidad queda vinculada al socket
+    // y NO puede ser reemplazada mediante eventos
+    // posteriores enviados por el cliente.
+    socket.user = {
+      id: usuarioId,
+      rol
+    };
+
+    return next();
+  } catch (error) {
+    console.error(
+      'Conexión WebSocket rechazada por autenticación.'
+    );
+
+    return next(
+      new Error(
+        'No autenticado: token WebSocket inválido.'
+      )
+    );
+  }
 });
+
+// ============================================================
+// USUARIOS ACTIVOS
+// ============================================================
+//
+// Permitimos múltiples pestañas/dispositivos
+// del mismo usuario.
+//
+// userId -> Set(socketId)
+// ============================================================
+
+const usuariosActivos = new Map();
+
+const agregarSocketUsuario = (
+  usuarioId,
+  socketId
+) => {
+  const key = String(usuarioId);
+
+  if (!usuariosActivos.has(key)) {
+    usuariosActivos.set(key, new Set());
+  }
+
+  usuariosActivos
+    .get(key)
+    .add(socketId);
+};
+
+const eliminarSocketUsuario = (
+  usuarioId,
+  socketId
+) => {
+  const key = String(usuarioId);
+
+  const sockets =
+    usuariosActivos.get(key);
+
+  if (!sockets) {
+    return;
+  }
+
+  sockets.delete(socketId);
+
+  if (sockets.size === 0) {
+    usuariosActivos.delete(key);
+  }
+};
+
+const obtenerSocketsUsuario = (
+  usuarioId
+) => {
+  return (
+    usuariosActivos.get(
+      String(usuarioId)
+    ) || new Set()
+  );
+};
+
+// ============================================================
+// HELPERS DE CHAT
+// ============================================================
+
+const normalizarRol = (rol) => {
+  const valor = String(
+    rol || ''
+  ).trim().toLowerCase();
+
+  if (
+    valor === 'administrador'
+  ) {
+    return 'admin';
+  }
+
+  return valor;
+};
+
+const esAdminSocket = (socket) => {
+  return (
+    normalizarRol(
+      socket.user?.rol
+    ) === 'admin'
+  );
+};
+
+const obtenerIdSocket = (socket) => {
+  return Number(
+    socket.user?.id || 0
+  );
+};
+
+// ============================================================
+// CONEXIÓN WEBSOCKET
+// ============================================================
+
+ioServer.on(
+  'connection',
+  (socket) => {
+    const usuarioId =
+      obtenerIdSocket(socket);
+
+    console.log(
+      `Usuario autenticado conectado al WebSocket: ${socket.id}`
+    );
+
+    agregarSocketUsuario(
+      usuarioId,
+      socket.id
+    );
+
+    // ========================================================
+    // EVENTO LEGADO
+    // ========================================================
+    //
+    // El frontend antiguo puede seguir enviando
+    // registrar_usuario.
+    //
+    // PERO ignoramos completamente el userId recibido.
+    //
+    // La identidad verdadera ya proviene del JWT.
+    // ========================================================
+
+    socket.on(
+      'registrar_usuario',
+      () => {
+        socket.emit(
+          'usuario_registrado',
+          {
+            usuario_id: usuarioId
+          }
+        );
+      }
+    );
+
+    // ========================================================
+    // OBTENER CONTACTOS
+    // ========================================================
+    //
+    // El rol se obtiene del JWT.
+    // Nunca confiamos en rolUsuario del cliente.
+    // ========================================================
+
+    socket.on(
+      'obtener_contactos',
+      async () => {
+        try {
+          const rolUsuario =
+            socket.user?.rol;
+
+          const contactos =
+            await Usuario.getChatContacts(
+              rolUsuario
+            );
+
+          socket.emit(
+            'lista_contactos',
+            contactos
+          );
+        } catch (error) {
+          console.error(
+            'Error obteniendo contactos de chat:',
+            error
+          );
+
+          socket.emit(
+            'error_chat',
+            'No se pudo cargar la lista de contactos.'
+          );
+        }
+      }
+    );
+
+    // ========================================================
+    // OBTENER HISTORIAL
+    // ========================================================
+    //
+    // Un usuario solo puede consultar conversaciones:
+    //
+    // - donde él sea remitente o destinatario
+    //
+    // Admin puede consultar cualquier conversación.
+    // ========================================================
+
+    socket.on(
+      'obtener_historial',
+      async (payload = {}) => {
+        try {
+          const remitenteId =
+            Number(
+              payload.remitente_id
+            );
+
+          const destinatarioId =
+            Number(
+              payload.destinatario_id
+            );
+
+          if (
+            !Number.isInteger(
+              remitenteId
+            ) ||
+            !Number.isInteger(
+              destinatarioId
+            ) ||
+            remitenteId <= 0 ||
+            destinatarioId <= 0
+          ) {
+            return socket.emit(
+              'error_chat',
+              'Los identificadores de la conversación no son válidos.'
+            );
+          }
+
+          const usuarioAutenticadoId =
+            obtenerIdSocket(socket);
+
+          const puedeVer =
+            esAdminSocket(socket) ||
+            remitenteId === usuarioAutenticadoId ||
+            destinatarioId === usuarioAutenticadoId;
+
+          if (!puedeVer) {
+            return socket.emit(
+              'error_chat',
+              'No tienes permiso para consultar esta conversación.'
+            );
+          }
+
+          const [mensajes] =
+            await db.query(
+              `
+                SELECT
+                  id,
+                  remitente_id,
+                  destinatario_id,
+                  mensaje,
+                  created_at
+                FROM chat_mensajes
+                WHERE
+                  (
+                    remitente_id = ?
+                    AND destinatario_id = ?
+                  )
+                  OR
+                  (
+                    remitente_id = ?
+                    AND destinatario_id = ?
+                  )
+                ORDER BY created_at ASC
+              `,
+              [
+                remitenteId,
+                destinatarioId,
+                destinatarioId,
+                remitenteId
+              ]
+            );
+
+          return socket.emit(
+            'historial_mensajes',
+            mensajes
+          );
+        } catch (error) {
+          console.error(
+            'Error obteniendo historial de chat:',
+            error
+          );
+
+          return socket.emit(
+            'error_chat',
+            'No se pudo recuperar el historial de chat.'
+          );
+        }
+      }
+    );
+
+    // ========================================================
+    // ENVIAR MENSAJE
+    // ========================================================
+    //
+    // IMPORTANTE:
+    // remitente_id enviado por frontend queda IGNORADO.
+    //
+    // El verdadero remitente es:
+    // socket.user.id
+    // ========================================================
+
+    socket.on(
+      'enviar_mensaje',
+      async (payload = {}) => {
+        try {
+          const destinatarioId =
+            Number(
+              payload.destinatario_id
+            );
+
+          const mensaje =
+            typeof payload.mensaje === 'string'
+              ? payload.mensaje.trim()
+              : '';
+
+          const remitenteId =
+            obtenerIdSocket(socket);
+
+          if (
+            !Number.isInteger(
+              destinatarioId
+            ) ||
+            destinatarioId <= 0
+          ) {
+            return socket.emit(
+              'error_chat',
+              'El destinatario no es válido.'
+            );
+          }
+
+          if (!mensaje) {
+            return socket.emit(
+              'error_chat',
+              'El mensaje no puede estar vacío.'
+            );
+          }
+
+          if (mensaje.length > 2000) {
+            return socket.emit(
+              'error_chat',
+              'El mensaje supera el límite permitido de 2000 caracteres.'
+            );
+          }
+
+          if (
+            destinatarioId === remitenteId
+          ) {
+            return socket.emit(
+              'error_chat',
+              'No puedes enviarte mensajes a ti mismo.'
+            );
+          }
+
+          // Verificamos que el destinatario exista.
+          const [
+            destinatarioRows
+          ] = await db.query(
+            `
+              SELECT id
+              FROM usuarios
+              WHERE id = ?
+              LIMIT 1
+            `,
+            [destinatarioId]
+          );
+
+          if (
+            destinatarioRows.length === 0
+          ) {
+            return socket.emit(
+              'error_chat',
+              'El usuario destinatario no existe.'
+            );
+          }
+
+          const [
+            result
+          ] = await db.query(
+            `
+              INSERT INTO chat_mensajes
+                (
+                  remitente_id,
+                  destinatario_id,
+                  mensaje
+                )
+              VALUES (?, ?, ?)
+            `,
+            [
+              remitenteId,
+              destinatarioId,
+              mensaje
+            ]
+          );
+
+          const nuevoMensaje = {
+            id: result.insertId,
+            remitente_id:
+              remitenteId,
+            destinatario_id:
+              destinatarioId,
+            mensaje,
+            created_at:
+              new Date()
+          };
+
+          // Confirmación al emisor.
+          socket.emit(
+            'recibir_mensaje',
+            nuevoMensaje
+          );
+
+          // Envío a todas las conexiones activas
+          // del destinatario.
+          const socketsDestinatario =
+            obtenerSocketsUsuario(
+              destinatarioId
+            );
+
+          for (
+            const socketId
+            of socketsDestinatario
+          ) {
+            ioServer
+              .to(socketId)
+              .emit(
+                'recibir_mensaje',
+                nuevoMensaje
+              );
+          }
+        } catch (error) {
+          console.error(
+            'Error enviando mensaje de chat:',
+            error
+          );
+
+          socket.emit(
+            'error_chat',
+            'El mensaje no pudo ser transmitido ni guardado.'
+          );
+        }
+      }
+    );
+
+    // ========================================================
+    // DESCONECTAR
+    // ========================================================
+
+    socket.on(
+      'disconnect',
+      () => {
+        eliminarSocketUsuario(
+          usuarioId,
+          socket.id
+        );
+
+        console.log(
+          `Conexión WebSocket cerrada: ${socket.id}`
+        );
+      }
+    );
+  }
+);
+
+// ============================================================
+// ARRANQUE DEL SERVIDOR
+// ============================================================
+
+const PORT =
+  Number(process.env.PORT) || 5000;
+
+server.listen(
+  PORT,
+  () => {
+    console.log(
+      `Servidor ArchiveX híbrido (HTTP + WebSockets) corriendo en puerto ${PORT}`
+    );
+  }
+);

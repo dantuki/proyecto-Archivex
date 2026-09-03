@@ -1,110 +1,238 @@
 const express = require('express');
-const router = express.Router();
-const postulacionController = require('../controllers/postulacionController');
-const verificarToken = require('../middleware/authMiddleware');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 
-// Configuración del almacenamiento para Multer
+const router = express.Router();
+
+const postulacionController = require('../controllers/postulacionController');
+
+const verificarToken = require('../middleware/authMiddleware');
+
+const { requireRole } = require('../middleware/roleMiddleware');
+
+const {
+  validarFirmasPostSubida
+} = require('../middleware/secureUpload');
+
+const { PRIVATE_DIR } = require('../config/uploadPaths');
+
+const multer = require('multer');
+
+// ============================================================
+// CONFIGURACIÓN DE ARCHIVOS
+// ============================================================
+//
+// Las postulaciones utilizan cuatro documentos:
+//
+// - presupuesto
+// - cronograma
+// - honestidad
+// - identidad
+//
+// Actualmente el flujo funcional trabaja con PDF.
+// Los archivos se almacenan en PRIVATE_DIR para evitar que
+// queden expuestos mediante el directorio público /uploads.
+// ============================================================
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const dir = './uploads/postulaciones';
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    cb(null, dir);
+    cb(null, PRIVATE_DIR);
   },
+
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, `${file.fieldname}-${uniqueSuffix}${path.extname(file.originalname)}`);
+    const uniqueSuffix =
+      Date.now() + '-' + Math.round(Math.random() * 1e9);
+
+    // La extensión no viene del nombre original del usuario.
+    cb(
+      null,
+      `${file.fieldname}-${uniqueSuffix}.pdf`
+    );
   }
 });
 
-// Filtro para validar que solo se suban archivos PDF
+// ============================================================
+// FILTRO DE ARCHIVOS
+// ============================================================
+
 const fileFilter = (req, file, cb) => {
   if (file.mimetype === 'application/pdf') {
-    cb(null, true);
-  } else {
-    cb(new Error('Solo se permiten archivos en formato PDF'), false);
+    return cb(null, true);
   }
+
+  return cb(
+    new Error(
+      'Solo se permiten archivos en formato PDF.'
+    ),
+    false
+  );
 };
 
-// Instancia de Multer con límites de tamaño (10MB por archivo)
-const upload = multer({ 
-  storage: storage, 
-  fileFilter: fileFilter,
-  limits: { fileSize: 10 * 1024 * 1024 }
+// ============================================================
+// MULTER
+// ============================================================
+//
+// Máximo 10 MB por archivo.
+// Máximo 4 archivos según los campos definidos.
+//
+// La validación de contenido real se realiza posteriormente
+// mediante validarFirmasPostSubida.
+// ============================================================
+
+const upload = multer({
+  storage,
+  fileFilter,
+
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 4
+  }
 });
 
-// Definición de los cuatro campos de archivo esperados
+// ============================================================
+// CAMPOS ESPERADOS
+// ============================================================
+
 const cpUpload = upload.fields([
-  { name: 'presupuesto', maxCount: 1 },
-  { name: 'cronograma', maxCount: 1 },
-  { name: 'honestidad', maxCount: 1 },
-  { name: 'identidad', maxCount: 1 } // Campo corregido para sincronizar con el frontend
+  {
+    name: 'presupuesto',
+    maxCount: 1
+  },
+  {
+    name: 'cronograma',
+    maxCount: 1
+  },
+  {
+    name: 'honestidad',
+    maxCount: 1
+  },
+  {
+    name: 'identidad',
+    maxCount: 1
+  }
 ]);
 
-// Middleware intermedio para capturar y manejar errores de Multer elegantemente
+// ============================================================
+// MANEJO DE ERRORES DE MULTER
+// ============================================================
+
 const handleMulterUpload = (req, res, next) => {
-  cpUpload(req, res, (err) => {
-    if (err instanceof multer.MulterError) {
-      if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(400).json({ 
-          status: 'error', 
-          message: 'Uno de los archivos excede el límite de peso permitido (10MB).' 
+  cpUpload(req, res, (error) => {
+    if (error instanceof multer.MulterError) {
+
+      if (error.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({
+          status: 'error',
+          message:
+            'Uno de los archivos excede el límite de peso permitido (10 MB).'
         });
       }
-      return res.status(400).json({ 
-        status: 'error', 
-        message: `Error de carga: ${err.message}` 
-      });
-    } else if (err) {
-      return res.status(400).json({ 
-        status: 'error', 
-        message: err.message 
+
+      if (error.code === 'LIMIT_FILE_COUNT') {
+        return res.status(400).json({
+          status: 'error',
+          message:
+            'Se excedió la cantidad máxima de archivos permitidos.'
+        });
+      }
+
+      if (error.code === 'LIMIT_UNEXPECTED_FILE') {
+        return res.status(400).json({
+          status: 'error',
+          message:
+            'Se recibió un campo de archivo no permitido.'
+        });
+      }
+
+      return res.status(400).json({
+        status: 'error',
+        message:
+          'No fue posible procesar los archivos enviados.'
       });
     }
+
+    if (error) {
+      return res.status(400).json({
+        status: 'error',
+        message: error.message
+      });
+    }
+
     next();
   });
 };
 
-// Middleware Premium de Autorización Flexible para Roles de Admin/Evaluadores
-const exigirRol = (...rolesPermitidos) => {
-  return (req, res, next) => {
-    if (!req.user || !req.user.rol) {
-      return res.status(401).json({ 
-        status: 'error', 
-        message: 'No autorizado: Falta información de rol en la sesión.' 
-      });
-    }
+// ============================================================
+// RUTAS
+// ============================================================
 
-    // Normalizar 'Admin' y 'Administrador' para evitar conflictos de escritura en DB
-    const miRol = req.user.rol.toLowerCase() === 'admin' ? 'administrador' : req.user.rol.toLowerCase();
-    const rolesMapeados = rolesPermitidos.map(r => r.toLowerCase() === 'admin' ? 'administrador' : r.toLowerCase());
+// ------------------------------------------------------------
+// RADICAR POSTULACIÓN
+// ------------------------------------------------------------
+//
+// El usuario autenticado crea la postulación.
+//
+// La identidad del usuario debe ser determinada en el
+// controller mediante req.user y no mediante una identidad
+// arbitraria enviada desde el frontend.
+//
 
-    if (!rolesMapeados.includes(miRol)) {
-      return res.status(403).json({ 
-        status: 'error', 
-        message: `Acceso denegado: El rol '${req.user.rol}' no tiene permisos para realizar esta acción.` 
-      });
-    }
-    next();
-  };
-};
+router.post(
+  '/radicar',
+  verificarToken,
+  handleMulterUpload,
+  validarFirmasPostSubida,
+  postulacionController.createPostulacion
+);
 
-// --- Definición de Rutas ---
+// ------------------------------------------------------------
+// MIS SOLICITUDES
+// ------------------------------------------------------------
 
-// Radicar una nueva postulación (Docente)
-router.post('/radicar', verificarToken, handleMulterUpload, postulacionController.createPostulacion);
+router.get(
+  '/mis-solicitudes',
+  verificarToken,
+  postulacionController.getPostulacionesByUser
+);
 
-// Obtener historial de postulaciones del docente autenticado
-router.get('/mis-solicitudes', verificarToken, postulacionController.getPostulacionesByUser);
+// ------------------------------------------------------------
+// BANDEJA ADMINISTRATIVA
+// ------------------------------------------------------------
+//
+// Se mantiene el comportamiento funcional actual:
+// Admin/Administrador y Evaluador pueden consultar esta vista.
+//
+// La autorización real debe seguir siendo validada también
+// en controller si existen restricciones adicionales sobre
+// los registros mostrados.
+//
 
-// Obtener todas las postulaciones para la bandeja de administración (Admite tanto 'Admin' como 'Administrador' y 'Evaluador')
-router.get('/', verificarToken, exigirRol('Admin', 'Administrador', 'Evaluador'), postulacionController.getPostulacionesAdmin);
+router.get(
+  '/',
+  verificarToken,
+  requireRole(
+    'Admin',
+    'Administrador',
+    'Evaluador'
+  ),
+  postulacionController.getPostulacionesAdmin
+);
 
-// Actualizar el estado de evaluación de una postulación (Admite tanto 'Admin' como 'Administrador')
-router.put('/:id/estado', verificarToken, exigirRol('Admin', 'Administrador'), postulacionController.updateEstadoPostulacion);
+// ------------------------------------------------------------
+// ACTUALIZAR ESTADO
+// ------------------------------------------------------------
+//
+// Solo Admin puede ejecutar esta operación.
+// Se evita que un Evaluador pueda convertir esta ruta en una
+// operación administrativa simplemente por estar autenticado.
+//
+
+router.put(
+  '/:id/estado',
+  verificarToken,
+  requireRole(
+    'Admin',
+    'Administrador'
+  ),
+  postulacionController.updateEstadoPostulacion
+);
 
 module.exports = router;
