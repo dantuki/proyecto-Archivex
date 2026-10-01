@@ -140,6 +140,28 @@ const passwordResetLimiter =
     }
   });
 
+const emailVerificationLimiter =
+  rateLimit({
+    windowMs:
+      15 *
+      60 *
+      1000,
+
+    limit:
+      10,
+
+    standardHeaders:
+      'draft-8',
+
+    legacyHeaders:
+      false,
+
+    message: {
+      status: 'error',
+      error: 'Demasiados intentos de verificación. Intenta nuevamente más tarde.'
+    }
+  });
+
 // ============================================================
 // REGISTRO PÚBLICO
 // ============================================================
@@ -187,6 +209,18 @@ router.post(
   '/reset-password',
   passwordResetLimiter,
   authController.resetPassword
+);
+
+router.post(
+  '/verify-email',
+  emailVerificationLimiter,
+  authController.verifyEmail
+);
+
+router.post(
+  '/resend-verification',
+  passwordResetRequestLimiter,
+  authController.resendEmailVerification
 );
 
 module.exports =

@@ -16,7 +16,8 @@ const {
   require('../config/securityConfig');
 
 const {
-  enviarCorreoRecuperacion
+  enviarCorreoRecuperacion,
+  enviarCorreoVerificacion
 } =
   require('../services/emailService');
 
@@ -53,6 +54,12 @@ const PASSWORD_RESET_TOKEN_BYTES =
 
 const PASSWORD_RESET_EXPIRATION_MINUTES =
   30;
+
+const EMAIL_VERIFICATION_TOKEN_BYTES =
+  32;
+
+const EMAIL_VERIFICATION_EXPIRATION_HOURS =
+  24;
 
 // ============================================================
 // OBTENER SECRET JWT
@@ -158,6 +165,12 @@ const generarTokenRecuperacion =
         'hex'
       );
   };
+
+const generarTokenVerificacion = () => {
+  return crypto
+    .randomBytes(EMAIL_VERIFICATION_TOKEN_BYTES)
+    .toString('hex');
+};
 
 // ============================================================
 // HASH TOKEN DE RECUPERACIÓN
@@ -384,6 +397,7 @@ const register =
         email,
         password,
         cedula,
+        rol,
         captchaToken
       } =
         req.body || {};
@@ -466,6 +480,25 @@ const register =
         return res.status(403).json({
           error:
             'Este correo está reservado para la administración de ArchiveX.'
+        });
+      }
+
+      if (rol === 'Admin' || rol === 'Administrador') {
+        return res.status(403).json({
+          error:
+            'El rol administrativo está reservado y no puede asignarse mediante el registro público.'
+        });
+      }
+
+      const rolesPublicos = [
+        'Profesor',
+        'Docente'
+      ];
+
+      if (!rolesPublicos.includes(rol)) {
+        return res.status(400).json({
+          error:
+            'El rol seleccionado no es válido.'
         });
       }
 
@@ -591,8 +624,7 @@ const register =
           10
         );
 
-      const rolFinal =
-        'Profesor';
+      const rolFinal = rol;
 
       const [
         userResult
@@ -639,11 +671,91 @@ const register =
         ]
       );
 
+      const tokenVerificacion =
+        generarTokenVerificacion();
+
+      const tokenVerificacionHash =
+        hashToken(tokenVerificacion);
+
+      const tokenVerificacionExpira =
+        new Date(
+          Date.now() +
+            EMAIL_VERIFICATION_EXPIRATION_HOURS *
+              60 *
+              60 *
+              1000
+        );
+
+      await connection.query(
+        `
+          UPDATE email_verification_tokens
+          SET used_at = CURRENT_TIMESTAMP
+          WHERE usuario_id = ?
+            AND used_at IS NULL
+        `,
+        [nuevoUsuarioId]
+      );
+
+      await connection.query(
+        `
+          INSERT INTO email_verification_tokens
+          (
+            usuario_id,
+            token_hash,
+            expires_at
+          )
+          VALUES (?, ?, ?)
+        `,
+        [
+          nuevoUsuarioId,
+          tokenVerificacionHash,
+          tokenVerificacionExpira
+        ]
+      );
+
       await connection.commit();
+
+      try {
+        await enviarCorreoVerificacion({
+          to: cleanedEmail,
+          name: cleanedNombre,
+          token: tokenVerificacion
+        });
+      } catch (emailError) {
+        console.error(
+          'No fue posible enviar el correo de verificación:',
+          emailError?.code || 'fallo de entrega'
+        );
+
+        try {
+          await pool.query(
+            `
+              UPDATE email_verification_tokens
+              SET used_at = CURRENT_TIMESTAMP
+              WHERE token_hash = ?
+                AND used_at IS NULL
+            `,
+            [tokenVerificacionHash]
+          );
+        } catch (invalidationError) {
+          console.error(
+            'No fue posible invalidar el token de verificación:',
+            invalidationError?.code || 'error interno'
+          );
+        }
+
+        return res.status(201).json({
+          message:
+            'Cuenta creada, pero no se pudo enviar el correo de verificación. Solicita un nuevo enlace desde el inicio de sesión.',
+          emailSent: false
+        });
+      }
 
       return res.status(201).json({
         message:
-          'Cuenta creada exitosamente. Revisa tu correo para completar la activación.',
+          'Cuenta creada exitosamente. Revisa tu correo para verificar la cuenta antes de iniciar sesión.',
+
+        emailSent: true,
 
         user: {
           id:
@@ -937,6 +1049,14 @@ const login =
         });
       }
 
+      if (!Boolean(user.correo_verificado)) {
+        return res.status(403).json({
+          code: 'EMAIL_NOT_VERIFIED',
+          error:
+            'Debes verificar tu correo electrónico antes de iniciar sesión.'
+        });
+      }
+
       // ------------------------------------------------------
       // GENERAR JWT
       // ------------------------------------------------------
@@ -1153,10 +1273,10 @@ const forgotPassword =
 
       try {
         await enviarCorreoRecuperacion({
-          email:
+          to:
             emailNormalizado,
 
-          nombre:
+          name:
             usuario.nombre_completo,
 
           token
@@ -1166,7 +1286,7 @@ const forgotPassword =
       ) {
         console.error(
           'No fue posible enviar el correo de recuperación:',
-          emailError
+          emailError?.code || 'fallo de entrega'
         );
 
         // --------------------------------------------------
@@ -1498,9 +1618,213 @@ const resetPassword =
     }
   };
 
+const verifyEmail = async (req, res) => {
+  let connection;
+
+  try {
+    const { token } = req.body || {};
+
+    if (typeof token !== 'string' || !token.trim()) {
+      return res.status(400).json({
+        error: 'El token de verificación es obligatorio.'
+      });
+    }
+
+    const tokenHash = hashToken(token.trim());
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [tokenRows] = await connection.query(
+      `
+        SELECT
+          id,
+          usuario_id,
+          expires_at,
+          used_at
+        FROM email_verification_tokens
+        WHERE token_hash = ?
+        LIMIT 1
+        FOR UPDATE
+      `,
+      [tokenHash]
+    );
+
+    const verificationToken = tokenRows[0];
+    const expiresAt = verificationToken
+      ? new Date(verificationToken.expires_at)
+      : null;
+
+    if (
+      !verificationToken ||
+      verificationToken.used_at ||
+      !expiresAt ||
+      Number.isNaN(expiresAt.getTime()) ||
+      expiresAt.getTime() <= Date.now()
+    ) {
+      await connection.rollback();
+      return res.status(400).json({
+        error: 'El enlace de verificación no es válido o ha expirado.'
+      });
+    }
+
+    await connection.query(
+      `
+        UPDATE usuarios
+        SET
+          correo_verificado = TRUE,
+          correo_verificado_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `,
+      [verificationToken.usuario_id]
+    );
+
+    await connection.query(
+      `
+        UPDATE email_verification_tokens
+        SET used_at = CURRENT_TIMESTAMP
+        WHERE usuario_id = ?
+          AND used_at IS NULL
+      `,
+      [verificationToken.usuario_id]
+    );
+
+    await connection.commit();
+
+    return res.status(200).json({
+      message: 'Correo verificado correctamente. Ya puedes iniciar sesión.'
+    });
+  } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        console.error(
+          'Error realizando rollback de verificación:',
+          rollbackError.message
+        );
+      }
+    }
+
+    console.error('Error verificando correo:', error?.code || 'error interno');
+
+    return res.status(500).json({
+      error: 'No fue posible verificar el correo en este momento.'
+    });
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+};
+
+// ============================================================
+// REENVIAR VERIFICACIÓN DE CORREO
+// ============================================================
+//
+// La respuesta se mantiene genérica para no revelar qué correos
+// tienen una cuenta. También permite recuperar un registro cuyo
+// proveedor SMTP estuvo temporalmente caído.
+// ============================================================
+
+const resendEmailVerification = async (req, res) => {
+  let connection;
+  const respuestaGenerica = {
+    message:
+      'Si existe una cuenta pendiente de verificación, recibirás un nuevo enlace en tu correo.'
+  };
+
+  try {
+    const email = normalizarEmail(req.body?.email);
+
+    if (!email) {
+      return res.status(200).json(respuestaGenerica);
+    }
+
+    connection = await pool.getConnection();
+    const [usuarios] = await connection.query(
+      `
+        SELECT id, nombre_completo, email, correo_verificado
+        FROM usuarios
+        WHERE email = ?
+        LIMIT 1
+      `,
+      [email]
+    );
+
+    const usuario = usuarios[0];
+    if (!usuario || Boolean(usuario.correo_verificado)) {
+      return res.status(200).json(respuestaGenerica);
+    }
+
+    const token = generarTokenVerificacion();
+    const tokenHash = hashToken(token);
+    const expiresAt = new Date(
+      Date.now() + EMAIL_VERIFICATION_EXPIRATION_HOURS * 60 * 60 * 1000
+    );
+
+    await connection.beginTransaction();
+    await connection.query(
+      `
+        UPDATE email_verification_tokens
+        SET used_at = CURRENT_TIMESTAMP
+        WHERE usuario_id = ? AND used_at IS NULL
+      `,
+      [usuario.id]
+    );
+    await connection.query(
+      `
+        INSERT INTO email_verification_tokens (usuario_id, token_hash, expires_at)
+        VALUES (?, ?, ?)
+      `,
+      [usuario.id, tokenHash, expiresAt]
+    );
+    await connection.commit();
+
+    try {
+      await enviarCorreoVerificacion({
+        to: usuario.email,
+        name: usuario.nombre_completo,
+        token
+      });
+    } catch (emailError) {
+      console.error(
+        'No fue posible reenviar el correo de verificación:',
+        emailError?.code || 'fallo de entrega'
+      );
+      await pool.query(
+        `
+          UPDATE email_verification_tokens
+          SET used_at = CURRENT_TIMESTAMP
+          WHERE token_hash = ? AND used_at IS NULL
+        `,
+        [tokenHash]
+      );
+    }
+
+    return res.status(200).json(respuestaGenerica);
+  } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        console.error('Error realizando rollback del reenvío:', rollbackError.message);
+      }
+    }
+
+    console.error('Error reenviando verificación:', error?.code || 'error interno');
+    return res.status(200).json(respuestaGenerica);
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+};
+
 module.exports = {
   register,
   login,
   forgotPassword,
-  resetPassword
+  resetPassword,
+  verifyEmail,
+  resendEmailVerification
 };

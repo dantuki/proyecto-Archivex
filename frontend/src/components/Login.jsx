@@ -1,9 +1,14 @@
 import React, {
+  useEffect,
   useState,
   useRef
 } from 'react';
 
 import ReCAPTCHA from 'react-google-recaptcha';
+
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  'http://localhost:5000/api';
 
 export default function AuthContainer({
   alAutenticar
@@ -13,6 +18,18 @@ export default function AuthContainer({
     setIsLogin
   ] =
     useState(true);
+
+  const [
+    authFlow,
+    setAuthFlow
+  ] =
+    useState('login');
+
+  const [
+    flowToken,
+    setFlowToken
+  ] =
+    useState('');
 
   const [
     showPassword,
@@ -35,6 +52,30 @@ export default function AuthContainer({
   const recaptchaRef =
     useRef(null);
 
+  useEffect(() => {
+    const currentUrl = new URL(window.location.href);
+    const resetToken = currentUrl.searchParams.get('reset-token');
+    const verifyToken = currentUrl.searchParams.get('verify-token');
+
+    if (resetToken) {
+      setFlowToken(resetToken);
+      setAuthFlow('reset');
+      currentUrl.searchParams.delete('reset-token');
+    } else if (verifyToken) {
+      setFlowToken(verifyToken);
+      setAuthFlow('verify');
+      currentUrl.searchParams.delete('verify-token');
+    }
+
+    if (resetToken || verifyToken) {
+      window.history.replaceState(
+        {},
+        document.title,
+        `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`
+      );
+    }
+  }, []);
+
   // ==========================================================
   // ESTADOS DEL FORMULARIO
   // ==========================================================
@@ -44,6 +85,12 @@ export default function AuthContainer({
     setNombreCompleto
   ] =
     useState('');
+
+  const [
+    rolRegistro,
+    setRolRegistro
+  ] =
+    useState('Profesor');
 
   const [
     email,
@@ -93,9 +140,23 @@ export default function AuthContainer({
       setEmail('');
       setPassword('');
       setNombreCompleto('');
+      setRolRegistro('Profesor');
       setShowPassword(false);
       setShowRegisterPassword(false);
+      setAuthFlow('login');
+      setFlowToken('');
     };
+
+  const volverAlLogin = (mantenerMensaje = false) => {
+    setAuthFlow('login');
+    setFlowToken('');
+    setIsLogin(true);
+    setPassword('');
+    setError('');
+    if (!mantenerMensaje) {
+      setMensajeExito('');
+    }
+  };
 
   // ==========================================================
   // LOGIN
@@ -134,7 +195,7 @@ export default function AuthContainer({
       try {
         const response =
           await fetch(
-            'http://localhost:5000/api/auth/login',
+            `${API_URL}/auth/login`,
             {
               method:
                 'POST',
@@ -156,9 +217,9 @@ export default function AuthContainer({
         const data =
           await response.json();
 
-        if (
-          !response.ok
-        ) {
+          if (
+            !response.ok
+          ) {
           setError(
             data.error ||
               'Error al iniciar sesión.'
@@ -170,7 +231,11 @@ export default function AuthContainer({
             recaptchaRef.current.reset();
           }
 
-          setCaptchaToken(null);
+            setCaptchaToken(null);
+
+            if (data.code === 'EMAIL_NOT_VERIFIED') {
+              setAuthFlow('resend-verification');
+            }
 
           return;
         }
@@ -274,7 +339,7 @@ export default function AuthContainer({
       try {
         const response =
           await fetch(
-            'http://localhost:5000/api/auth/register',
+            `${API_URL}/auth/register`,
             {
               method:
                 'POST',
@@ -292,6 +357,8 @@ export default function AuthContainer({
                   email,
 
                   password,
+
+                  rol: rolRegistro,
 
                   captchaToken
                 })
@@ -321,7 +388,7 @@ export default function AuthContainer({
         }
 
         setMensajeExito(
-          '¡Cuenta creada correctamente como Profesor! Ya puedes iniciar sesión.'
+          `Cuenta creada como ${rolRegistro}. Revisa tu correo y verifica la cuenta antes de iniciar sesión.`
         );
 
         setTimeout(
@@ -349,6 +416,120 @@ export default function AuthContainer({
         setCaptchaToken(null);
       }
     };
+
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    setError('');
+    setMensajeExito('');
+
+    try {
+      const response = await fetch(
+        `${API_URL}/auth/forgot-password`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email })
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'No se pudo procesar la solicitud.');
+      }
+
+      setMensajeExito(
+        data.message || 'Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.'
+      );
+    } catch (requestError) {
+      setError(requestError.message || 'No se pudo conectar con el servidor.');
+    }
+  };
+
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    setError('');
+    setMensajeExito('');
+
+    try {
+      const response = await fetch(
+        `${API_URL}/auth/reset-password`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: flowToken, password })
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'No se pudo restablecer la contraseña.');
+      }
+
+      setMensajeExito(
+        data.message || 'Contraseña actualizada correctamente. Ya puedes iniciar sesión.'
+      );
+      setAuthFlow('reset-success');
+      setFlowToken('');
+      setPassword('');
+    } catch (requestError) {
+      setError(requestError.message || 'No se pudo conectar con el servidor.');
+    }
+  };
+
+  const handleVerifyEmail = async () => {
+    setError('');
+    setMensajeExito('');
+
+    try {
+      const response = await fetch(
+        `${API_URL}/auth/verify-email`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: flowToken })
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'No se pudo verificar el correo.');
+      }
+
+      setMensajeExito(
+        data.message || 'Correo verificado correctamente. Ya puedes iniciar sesión.'
+      );
+      setAuthFlow('verify-success');
+      setFlowToken('');
+    } catch (requestError) {
+      setError(requestError.message || 'No se pudo conectar con el servidor.');
+    }
+  };
+
+  const handleResendVerification = async (e) => {
+    e.preventDefault();
+    setError('');
+    setMensajeExito('');
+
+    try {
+      const response = await fetch(
+        `${API_URL}/auth/resend-verification`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email })
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'No se pudo procesar la solicitud.');
+      }
+
+      setMensajeExito(data.message);
+    } catch (requestError) {
+      setError(requestError.message || 'No se pudo conectar con el servidor.');
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col justify-between p-6 sm:p-10 font-sans selection:bg-blue-500 selection:text-white">
@@ -401,7 +582,148 @@ export default function AuthContainer({
             </div>
           )}
 
-          {isLogin ? (
+          {authFlow !== 'login' && authFlow !== 'register' ? (
+            <div className="space-y-6 animate-fade-in">
+              {authFlow === 'forgot' && (
+                <>
+                  <div className="space-y-1.5">
+                    <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+                      Recuperar contraseña
+                    </h1>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Introduce tu correo. Si está registrado, recibirás un enlace para restablecer la contraseña.
+                    </p>
+                  </div>
+                  <form className="space-y-4" onSubmit={handleForgotPassword}>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                        Correo
+                      </label>
+                      <input
+                        type="email"
+                        required
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="ejemplo@correo.com"
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white transition-all duration-200"
+                      />
+                    </div>
+                    <button type="submit" className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm rounded-xl transition-all duration-150 shadow-sm">
+                      Enviar enlace
+                    </button>
+                  </form>
+                  <button type="button" onClick={() => volverAlLogin()} className="w-full text-xs font-semibold text-blue-600 hover:underline">
+                    Volver al inicio de sesión
+                  </button>
+                </>
+              )}
+
+              {authFlow === 'resend-verification' && (
+                <>
+                  <div className="space-y-1.5">
+                    <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+                      Verifica tu correo
+                    </h1>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Tu cuenta aún no está activa. Enviaremos otro enlace de verificación.
+                    </p>
+                  </div>
+                  <form className="space-y-4" onSubmit={handleResendVerification}>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                        Correo
+                      </label>
+                      <input
+                        type="email"
+                        required
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="ejemplo@correo.com"
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white transition-all duration-200"
+                      />
+                    </div>
+                    <button type="submit" className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm rounded-xl transition-all duration-150 shadow-sm">
+                      Reenviar enlace
+                    </button>
+                  </form>
+                  <button type="button" onClick={() => volverAlLogin()} className="w-full text-xs font-semibold text-blue-600 hover:underline">
+                    Volver al inicio de sesión
+                  </button>
+                </>
+              )}
+
+              {authFlow === 'reset' && (
+                <>
+                  <div className="space-y-1.5">
+                    <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+                      Nueva contraseña
+                    </h1>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Elige una contraseña de entre 8 y 128 caracteres.
+                    </p>
+                  </div>
+                  <form className="space-y-4" onSubmit={handleResetPassword}>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                        Nueva contraseña
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        minLength={8}
+                        maxLength={128}
+                        autoComplete="new-password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-blue-500 focus:bg-white transition-all duration-200"
+                      />
+                    </div>
+                    <button type="submit" className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm rounded-xl transition-all duration-150 shadow-sm">
+                      Cambiar contraseña
+                    </button>
+                  </form>
+                  <button type="button" onClick={() => volverAlLogin()} className="w-full text-xs font-semibold text-blue-600 hover:underline">
+                    Volver al inicio de sesión
+                  </button>
+                </>
+              )}
+
+              {authFlow === 'verify' && (
+                <>
+                  <div className="space-y-1.5">
+                    <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+                      Verificar correo
+                    </h1>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Confirma tu dirección de correo para activar la cuenta de ArchiveX.
+                    </p>
+                  </div>
+                  <button type="button" onClick={handleVerifyEmail} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm rounded-xl transition-all duration-150 shadow-sm">
+                    Verificar correo
+                  </button>
+                  <button type="button" onClick={() => volverAlLogin()} className="w-full text-xs font-semibold text-blue-600 hover:underline">
+                    Volver al inicio de sesión
+                  </button>
+                </>
+              )}
+
+              {(authFlow === 'reset-success' || authFlow === 'verify-success') && (
+                <>
+                  <div className="space-y-1.5">
+                    <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+                      {authFlow === 'reset-success' ? 'Contraseña actualizada' : 'Correo verificado'}
+                    </h1>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Ya puedes volver al inicio de sesión.
+                    </p>
+                  </div>
+                  <button type="button" onClick={() => volverAlLogin(true)} className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm rounded-xl transition-all duration-150 shadow-sm">
+                    Ir al inicio de sesión
+                  </button>
+                </>
+              )}
+            </div>
+          ) : isLogin ? (
             <div className="space-y-6 animate-fade-in">
 
               <div className="space-y-1.5">
@@ -456,9 +778,9 @@ export default function AuthContainer({
                     <button
                       type="button"
                       onClick={() => {
-                        setError(
-                          'La recuperación de contraseña se habilitará mediante correo electrónico en la siguiente evolución de ArchiveX.'
-                        );
+                        setError('');
+                        setMensajeExito('');
+                        setAuthFlow('forgot');
                       }}
                       className="text-xs font-semibold text-blue-600 hover:underline"
                     >
@@ -670,8 +992,18 @@ export default function AuthContainer({
 
                 </div>
 
-                <div className="p-3 rounded-xl bg-blue-50 border border-blue-100 text-xs text-blue-700 text-center font-medium">
-                  Las cuentas creadas mediante el registro público se asignan automáticamente al rol Profesor.
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                    Rol
+                  </label>
+                  <select
+                    value={rolRegistro}
+                    onChange={(e) => setRolRegistro(e.target.value)}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-blue-500 focus:bg-white transition-all duration-200"
+                  >
+                    <option value="Profesor">Profesor</option>
+                    <option value="Docente">Docente</option>
+                  </select>
                 </div>
 
                 <div className="flex justify-center my-2">

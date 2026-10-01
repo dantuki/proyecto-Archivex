@@ -31,6 +31,59 @@ const escaparHtml = (valor) => {
     .replace(/'/g, '&#039;');
 };
 
+const redactarSecretos = (valor) => {
+  let texto = String(valor || '');
+
+  [
+    process.env.MAIL_PASSWORD,
+    process.env.JWT_SECRET,
+    process.env.RECAPTCHA_SECRET_KEY,
+    process.env.DB_PASSWORD
+  ].forEach((secreto) => {
+    if (typeof secreto === 'string' && secreto.length > 0) {
+      texto = texto.split(secreto).join('[REDACTADO]');
+    }
+  });
+
+  return texto;
+};
+
+const enviarCorreo = async ({ transporter, mail, destinatario }) => {
+  const enDesarrollo = process.env.NODE_ENV === 'development';
+
+  if (enDesarrollo) {
+    console.info('[SMTP] Intento de envío', { destinatario });
+  }
+
+  try {
+    const resultado = await transporter.sendMail(mail);
+
+    if (enDesarrollo) {
+      console.info('[SMTP] Envío completado', {
+        destinatario,
+        messageId: resultado.messageId,
+        accepted: resultado.accepted,
+        rejected: resultado.rejected
+      });
+    }
+
+    return resultado;
+  } catch (error) {
+    if (enDesarrollo) {
+      console.error('[SMTP] Falló el envío', {
+        destinatario,
+        code: redactarSecretos(error.code),
+        command: redactarSecretos(error.command),
+        responseCode: error.responseCode,
+        response: redactarSecretos(error.response),
+        message: redactarSecretos(error.message)
+      });
+    }
+
+    throw error;
+  }
+};
+
 // ============================================================
 // SERVICIO DE RECUPERACIÓN DE CONTRASEÑA
 // ============================================================
@@ -130,16 +183,64 @@ Equipo de ArchiveX
 </html>
 `.trim();
 
-  return await transporter.sendMail({
-    from: config.from,
-    to: destinatario.trim(),
-    subject: 'ArchiveX - Recuperación de contraseña',
-    text: textoPlano,
-    html
+  return enviarCorreo({
+    transporter,
+    destinatario: destinatario.trim(),
+    mail: {
+      from: config.from,
+      to: destinatario.trim(),
+      subject: 'ArchiveX - Recuperación de contraseña',
+      text: textoPlano,
+      html
+    }
   });
 };
 
 const enviarCorreoRecuperacion = sendPasswordResetEmail;
+
+const sendEmailVerification = async ({ to, name, token }) => {
+  if (typeof to !== 'string' || !to.trim()) {
+    throw new Error('El correo del destinatario es obligatorio.');
+  }
+
+  if (typeof token !== 'string' || !token.trim()) {
+    throw new Error('El token de verificación es obligatorio.');
+  }
+
+  const transporter = crearTransporter();
+  const config = obtenerConfiguracionMail();
+  const frontendOrigin = obtenerFrontendOrigin();
+  const verificationUrl = `${frontendOrigin}/?verify-token=${encodeURIComponent(token.trim())}`;
+  const nombreSeguro = escaparHtml(name || 'Usuario de ArchiveX');
+
+  return enviarCorreo({
+    transporter,
+    destinatario: to.trim(),
+    mail: {
+      from: config.from,
+      to: to.trim(),
+      subject: 'ArchiveX - Verifica tu correo electrónico',
+      text: `Hola ${name || 'usuario'},\n\nConfirma tu correo electrónico para activar tu cuenta de ArchiveX:\n\n${verificationUrl}\n\nEste enlace expira en 24 horas. Si no creaste esta cuenta, puedes ignorar este mensaje.`,
+      html: `
+      <!DOCTYPE html>
+      <html lang="es">
+      <head><meta charset="UTF-8"><title>Verificación de correo - ArchiveX</title></head>
+      <body style="margin:0;padding:32px;background:#f8fafc;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
+        <main style="max-width:560px;margin:0 auto;padding:28px;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;">
+          <h1 style="font-size:22px;">Verifica tu correo electrónico</h1>
+          <p>Hola <strong>${nombreSeguro}</strong>,</p>
+          <p>Confirma tu correo para activar tu cuenta de ArchiveX.</p>
+          <p><a href="${verificationUrl}" style="display:inline-block;padding:12px 20px;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:700;">Verificar correo</a></p>
+          <p style="font-size:13px;color:#64748b;">Este enlace expira en 24 horas. Si no creaste esta cuenta, ignora este mensaje.</p>
+        </main>
+      </body>
+      </html>
+      `.trim()
+    }
+  });
+};
+
+const enviarCorreoVerificacion = sendEmailVerification;
 
 // ============================================================
 // EXPORTACIÓN
@@ -147,5 +248,7 @@ const enviarCorreoRecuperacion = sendPasswordResetEmail;
 
 module.exports = {
   sendPasswordResetEmail,
-  enviarCorreoRecuperacion
+  enviarCorreoRecuperacion,
+  sendEmailVerification,
+  enviarCorreoVerificacion
 };
