@@ -1,18 +1,31 @@
 const express = require('express');
 
-const verificarToken = require('../middleware/authMiddleware.js');
+const verificarToken =
+  require('../middleware/authMiddleware.js');
+
 const {
   descargarArchivoPrivado
 } = require('../controllers/fileController.js');
 
-const router = express.Router();
+const router =
+  express.Router();
 
-/**
- * Todos los archivos privados requieren JWT.
- *
- * La autorización fina (Admin / propietario)
- * se realiza dentro de fileController.js.
- */
+// ============================================================
+// ARCHIVOS PRIVADOS
+// ============================================================
+//
+// Todos los archivos privados requieren autenticación.
+//
+// La autorización fina se realiza dentro del controller:
+//
+// - Admin
+// - propietario del recurso
+// - evaluador asignado a la solicitud correspondiente
+//
+// No se utiliza ningún identificador de usuario enviado por
+// el cliente para determinar permisos.
+// ============================================================
+
 router.get(
   '/:archivo',
   verificarToken,

@@ -2,21 +2,26 @@ const express = require('express');
 
 const router = express.Router();
 
-const solicitudController = require('../controllers/solicitudController');
+const solicitudController =
+  require('../controllers/solicitudController');
 
-const verificarToken = require('../middleware/authMiddleware');
+const verificarToken =
+  require('../middleware/authMiddleware');
 
-const upload = require('../middleware/uploadMiddleware');
+const upload =
+  require('../middleware/uploadMiddleware');
 
 const {
   validarFirmasPostSubida
 } = require('../middleware/secureUpload');
 
+const multer = require('multer');
+
 // ============================================================
 // CAMPOS DE ARCHIVOS
 // ============================================================
 //
-// ArchiveX utiliza cuatro documentos en las solicitudes:
+// ArchiveX utiliza cuatro documentos:
 //
 // - presupuesto
 // - cronograma
@@ -24,7 +29,7 @@ const {
 // - identidad
 //
 // Cada campo admite como máximo un archivo.
-//
+// ============================================================
 
 const uploadFields = upload.fields([
   {
@@ -46,12 +51,89 @@ const uploadFields = upload.fields([
 ]);
 
 // ============================================================
+// MANEJO CONTROLADO DE ERRORES DE MULTER
+// ============================================================
+//
+// Evitamos que errores esperables de subida terminen como 500.
+//
+// Ejemplos:
+//
+// - archivo demasiado grande;
+// - campo inesperado;
+// - demasiados archivos;
+// - MIME no permitido.
+// ============================================================
+
+const handleMulterUpload = (
+  req,
+  res,
+  next
+) => {
+  uploadFields(
+    req,
+    res,
+    (error) => {
+      if (
+        error instanceof multer.MulterError
+      ) {
+        if (
+          error.code === 'LIMIT_FILE_SIZE'
+        ) {
+          return res.status(400).json({
+            status: 'error',
+            message:
+              'Uno de los archivos excede el límite de peso permitido.'
+          });
+        }
+
+        if (
+          error.code === 'LIMIT_FILE_COUNT'
+        ) {
+          return res.status(400).json({
+            status: 'error',
+            message:
+              'Se excedió la cantidad máxima de archivos permitidos.'
+          });
+        }
+
+        if (
+          error.code === 'LIMIT_UNEXPECTED_FILE'
+        ) {
+          return res.status(400).json({
+            status: 'error',
+            message:
+              'Se recibió un campo de archivo no permitido.'
+          });
+        }
+
+        return res.status(400).json({
+          status: 'error',
+          message:
+            'No fue posible procesar los archivos enviados.'
+        });
+      }
+
+      if (error) {
+        return res.status(400).json({
+          status: 'error',
+          message:
+            error.message ||
+            'No fue posible procesar los archivos enviados.'
+        });
+      }
+
+      next();
+    }
+  );
+};
+
+// ============================================================
 // RUTAS DE CONSULTA
 // ============================================================
 
-// Obtener solicitudes.
-// El controller determina qué puede consultar el usuario
-// según su identidad y rol.
+// ------------------------------------------------------------
+// OBTENER SOLICITUDES
+// ------------------------------------------------------------
 
 router.get(
   '/',
@@ -59,10 +141,13 @@ router.get(
   solicitudController.getSolicitudes
 );
 
-// Obtener las solicitudes del usuario autenticado.
+// ------------------------------------------------------------
+// OBTENER MIS SOLICITUDES
+// ------------------------------------------------------------
 //
-// Esta ruta debe permanecer antes de /:id para evitar que
-// "mis-solicitudes" sea interpretado como un ID.
+// Debe aparecer antes de /:id para evitar que
+// "mis-solicitudes" sea tratado como un identificador.
+// ------------------------------------------------------------
 
 router.get(
   '/mis-solicitudes',
@@ -70,9 +155,9 @@ router.get(
   solicitudController.getMisSolicitudes
 );
 
-// Obtener una solicitud específica.
-//
-// El controller realiza la comprobación de ownership.
+// ------------------------------------------------------------
+// OBTENER SOLICITUD POR ID
+// ------------------------------------------------------------
 
 router.get(
   '/:id',
@@ -84,21 +169,26 @@ router.get(
 // CREAR SOLICITUD
 // ============================================================
 //
-// Flujo de seguridad:
+// Flujo:
 //
-// 1. verificarToken
-// 2. Multer
-// 3. validación de magic bytes
-// 4. controller
+// JWT
+//   ↓
+// Multer
+//   ↓
+// validación MIME
+//   ↓
+// validación magic bytes
+//   ↓
+// controller
 //
-// Ningún archivo llega al controller si la firma binaria
-// no corresponde con el tipo permitido.
-//
+// Ningún archivo llega al controller si falla la validación
+// de contenido.
+// ============================================================
 
 router.post(
   '/',
   verificarToken,
-  uploadFields,
+  handleMulterUpload,
   validarFirmasPostSubida,
   solicitudController.createSolicitud
 );
@@ -106,17 +196,11 @@ router.post(
 // ============================================================
 // ACTUALIZAR SOLICITUD
 // ============================================================
-//
-// Mismo flujo seguro de subida.
-//
-// Además, el controller verifica ownership y controla
-// los cambios administrativos de estado.
-//
 
 router.put(
   '/:id',
   verificarToken,
-  uploadFields,
+  handleMulterUpload,
   validarFirmasPostSubida,
   solicitudController.updateSolicitud
 );
@@ -124,9 +208,6 @@ router.put(
 // ============================================================
 // ELIMINAR SOLICITUD
 // ============================================================
-//
-// El controller verifica ownership o permisos administrativos.
-//
 
 router.delete(
   '/:id',

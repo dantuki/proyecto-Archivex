@@ -1,80 +1,193 @@
-const express = require('express');
-const rateLimit = require('express-rate-limit');
+const express =
+  require('express');
 
-const authController = require('../controllers/authController.js');
+const rateLimit =
+  require('express-rate-limit');
 
-const router = express.Router();
+const authController =
+  require('../controllers/authController.js');
 
-/**
- * Rate limiting para autenticación.
- *
- * Objetivo:
- * - Reducir ataques de fuerza bruta sobre login.
- * - Reducir abuso automatizado del registro.
- *
- * IMPORTANTE:
- * Los límites son relativamente estrictos porque estas rutas
- * son sensibles y pueden ser atacadas repetidamente.
- */
+const router =
+  express.Router();
 
-/**
- * Límite para inicio de sesión:
- * máximo 10 intentos por IP cada 15 minutos.
- */
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 10,
-  standardHeaders: 'draft-8',
-  legacyHeaders: false,
-  message: {
-    status: 'error',
-    message:
-      'Demasiados intentos de inicio de sesión. Intenta nuevamente en unos minutos.'
-  }
-});
+// ============================================================
+// RATE LIMITING
+// ============================================================
+//
+// LOGIN:
+// 10 solicitudes por IP cada 15 minutos.
+//
+// REGISTRO:
+// 5 solicitudes por IP cada hora.
+//
+// RECUPERACIÓN:
+// 5 solicitudes por IP cada 15 minutos.
+//
+// RESTABLECIMIENTO:
+// 10 solicitudes por IP cada 15 minutos.
+//
+// ============================================================
 
-/**
- * Límite para registro:
- * máximo 5 intentos por IP cada hora.
- */
-const registerLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  limit: 5,
-  standardHeaders: 'draft-8',
-  legacyHeaders: false,
-  message: {
-    status: 'error',
-    message:
-      'Demasiados intentos de registro. Intenta nuevamente más tarde.'
-  }
-});
+const loginLimiter =
+  rateLimit({
+    windowMs:
+      15 *
+      60 *
+      1000,
 
-/**
- * Registro público.
- *
- * El controlador se encarga además de:
- * - validar CAPTCHA
- * - impedir asignación de roles privilegiados
- * - validar los datos
- */
+    limit:
+      10,
+
+    standardHeaders:
+      'draft-8',
+
+    legacyHeaders:
+      false,
+
+    message: {
+      status:
+        'error',
+
+      error:
+        'Demasiados intentos de inicio de sesión. Intenta nuevamente en unos minutos.',
+
+      message:
+        'Demasiados intentos de inicio de sesión. Intenta nuevamente en unos minutos.'
+    }
+  });
+
+const registerLimiter =
+  rateLimit({
+    windowMs:
+      60 *
+      60 *
+      1000,
+
+    limit:
+      5,
+
+    standardHeaders:
+      'draft-8',
+
+    legacyHeaders:
+      false,
+
+    message: {
+      status:
+        'error',
+
+      error:
+        'Demasiados intentos de registro. Intenta nuevamente más tarde.',
+
+      message:
+        'Demasiados intentos de registro. Intenta nuevamente más tarde.'
+    }
+  });
+
+const passwordResetRequestLimiter =
+  rateLimit({
+    windowMs:
+      15 *
+      60 *
+      1000,
+
+    limit:
+      5,
+
+    standardHeaders:
+      'draft-8',
+
+    legacyHeaders:
+      false,
+
+    message: {
+      status:
+        'error',
+
+      error:
+        'Demasiadas solicitudes de recuperación. Intenta nuevamente más tarde.',
+
+      message:
+        'Demasiadas solicitudes de recuperación. Intenta nuevamente más tarde.'
+    }
+  });
+
+const passwordResetLimiter =
+  rateLimit({
+    windowMs:
+      15 *
+      60 *
+      1000,
+
+    limit:
+      10,
+
+    standardHeaders:
+      'draft-8',
+
+    legacyHeaders:
+      false,
+
+    message: {
+      status:
+        'error',
+
+      error:
+        'Demasiados intentos de restablecimiento. Intenta nuevamente más tarde.',
+
+      message:
+        'Demasiados intentos de restablecimiento. Intenta nuevamente más tarde.'
+    }
+  });
+
+// ============================================================
+// REGISTRO PÚBLICO
+// ============================================================
+
 router.post(
   '/register',
   registerLimiter,
   authController.register
 );
 
-/**
- * Inicio de sesión.
- *
- * El controlador se encarga además de:
- * - validar CAPTCHA
- * - verificar credenciales
- * - firmar JWT
- */
+// ============================================================
+// INICIO DE SESIÓN
+// ============================================================
+
 router.post(
   '/login',
   loginLimiter,
   authController.login
 );
 
-module.exports = router;
+// ============================================================
+// SOLICITAR RECUPERACIÓN
+// ============================================================
+//
+// IMPORTANTE:
+//
+// Esta respuesta será genérica para evitar enumeración de
+// cuentas.
+//
+// No se informará al cliente si el correo existe.
+//
+// ============================================================
+
+router.post(
+  '/forgot-password',
+  passwordResetRequestLimiter,
+  authController.forgotPassword
+);
+
+// ============================================================
+// RESTABLECER CONTRASEÑA
+// ============================================================
+
+router.post(
+  '/reset-password',
+  passwordResetLimiter,
+  authController.resetPassword
+);
+
+module.exports =
+  router;

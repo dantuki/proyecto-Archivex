@@ -27,7 +27,8 @@ const multer = require('multer');
 // - honestidad
 // - identidad
 //
-// Actualmente el flujo funcional trabaja con PDF.
+// El flujo funcional trabaja con PDF.
+//
 // Los archivos se almacenan en PRIVATE_DIR para evitar que
 // queden expuestos mediante el directorio público /uploads.
 // ============================================================
@@ -117,7 +118,6 @@ const cpUpload = upload.fields([
 const handleMulterUpload = (req, res, next) => {
   cpUpload(req, res, (error) => {
     if (error instanceof multer.MulterError) {
-
       if (error.code === 'LIMIT_FILE_SIZE') {
         return res.status(400).json({
           status: 'error',
@@ -152,7 +152,8 @@ const handleMulterUpload = (req, res, next) => {
     if (error) {
       return res.status(400).json({
         status: 'error',
-        message: error.message
+        message:
+          error.message || 'No fue posible procesar los archivos enviados.'
       });
     }
 
@@ -197,12 +198,13 @@ router.get(
 // BANDEJA ADMINISTRATIVA
 // ------------------------------------------------------------
 //
-// Se mantiene el comportamiento funcional actual:
-// Admin/Administrador y Evaluador pueden consultar esta vista.
+// Esta operación devuelve la bandeja global de postulaciones.
 //
-// La autorización real debe seguir siendo validada también
-// en controller si existen restricciones adicionales sobre
-// los registros mostrados.
+// El controller realiza nuevamente la comprobación de rol
+// como defensa en profundidad.
+//
+// Por consistencia con el controller, únicamente Admin puede
+// acceder a esta operación.
 //
 
 router.get(
@@ -210,8 +212,7 @@ router.get(
   verificarToken,
   requireRole(
     'Admin',
-    'Administrador',
-    'Evaluador'
+    'Administrador'
   ),
   postulacionController.getPostulacionesAdmin
 );
@@ -221,6 +222,7 @@ router.get(
 // ------------------------------------------------------------
 //
 // Solo Admin puede ejecutar esta operación.
+//
 // Se evita que un Evaluador pueda convertir esta ruta en una
 // operación administrativa simplemente por estar autenticado.
 //

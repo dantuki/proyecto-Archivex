@@ -49,7 +49,9 @@ const storage = multer.diskStorage({
     const ext = MIME_EXT[file.mimetype];
 
     const uniqueSuffix =
-      Date.now() + '-' + Math.round(Math.random() * 1e9);
+      Date.now() +
+      '-' +
+      Math.round(Math.random() * 1e9);
 
     cb(
       null,
@@ -57,6 +59,10 @@ const storage = multer.diskStorage({
     );
   }
 });
+
+// ============================================================
+// MULTER
+// ============================================================
 
 const upload = multer({
   storage,
@@ -97,15 +103,13 @@ router.use(verificarToken);
 // CONSULTAR NOTICIAS DE UN USUARIO
 // ============================================================
 //
-// El controller debe verificar:
-//
 // Admin:
 //   puede consultar.
 //
 // Usuario normal:
 //   únicamente sus propias noticias.
 //
-// No confiamos únicamente en la URL.
+// El controller comprueba ownership.
 // ============================================================
 
 router.get(
@@ -120,16 +124,19 @@ router.get(
 // Flujo:
 //
 // JWT
-//  ↓
+//   ↓
 // Multer
-//  ↓
-// validación de MIME/extensión permitida
-//  ↓
-// validación de magic bytes
-//  ↓
+//   ↓
+// validación MIME
+//   ↓
+// validación magic bytes
+//   ↓
 // controller
 //
-// La identidad del autor será obtenida del JWT.
+// La identidad del autor será obtenida del JWT para usuarios
+// normales.
+//
+// El Admin puede crear para otro usuario mediante usuario_id.
 // ============================================================
 
 router.post(

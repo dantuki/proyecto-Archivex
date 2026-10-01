@@ -3,154 +3,592 @@ import axios from 'axios';
 
 const API_BASE = 'http://localhost:5000/api';
 
-function FilaSolicitud({ sol, evaluadores, descargarDocumento, getBadgeStyles, onActualizarEstado, onAsignarEvaluador }) {
-  const [nuevoEstado, setNuevoEstado] = useState(sol.estado);
-  const [motivo, setMotivo] = useState(sol.motivo_decision || '');
-  const [mostrarMotivoInput, setMostrarMotivoInput] = useState(sol.estado === 'Rechazado');
-  const [mostrarEvaluadorInput, setMostrarEvaluadorInput] = useState(false);
-  const [evaluadorSeleccionado, setEvaluadorSeleccionado] = useState(sol.evaluador_id || '');
-  const [enviando, setEnviando] = useState(false);
+function obtenerToken() {
+  return (
+    sessionStorage.getItem('token') ||
+    localStorage.getItem('token') ||
+    ''
+  );
+}
 
-  useEffect(() => {
-    setNuevoEstado(sol.estado);
-    setMotivo(sol.motivo_decision || '');
-    setMostrarMotivoInput(sol.estado === 'Rechazado');
-    setEvaluadorSeleccionado(sol.evaluador_id || '');
-  }, [sol]);
+async function descargarDocumentoSeguro(nombreArchivo) {
+  if (!nombreArchivo) {
+    alert(
+      'Este documento no fue cargado correctamente o no está disponible.'
+    );
+    return;
+  }
 
-  const handleEstadoChange = async (e) => {
-    const estadoSeleccionado = e.target.value;
-    setNuevoEstado(estadoSeleccionado);
-    
-    if (estadoSeleccionado === 'Rechazado') {
-      setMostrarMotivoInput(true);
-      setMostrarEvaluadorInput(false);
-    } else if (estadoSeleccionado === 'En Evaluación') {
-      setMostrarEvaluadorInput(true);
-      setMostrarMotivoInput(false);
-    } else {
-      setMostrarMotivoInput(false);
-      setMostrarEvaluadorInput(false);
-      await guardarCambioEstado(estadoSeleccionado, null);
+  // ----------------------------------------------------------
+  // URL EXTERNA
+  // ----------------------------------------------------------
+
+  if (
+    typeof nombreArchivo === 'string' &&
+    /^https?:\/\//i.test(nombreArchivo)
+  ) {
+    window.open(
+      nombreArchivo,
+      '_blank',
+      'noopener,noreferrer'
+    );
+
+    return;
+  }
+
+  let valorLimpio =
+    String(nombreArchivo)
+      .trim()
+      .replace(/^\/+/, '');
+
+  // ----------------------------------------------------------
+  // ARCHIVO PÚBLICO LEGACY
+  // ----------------------------------------------------------
+  //
+  // Solo se mantiene compatibilidad temporal con archivos
+  // antiguos que sigan físicamente en /uploads.
+  // ----------------------------------------------------------
+
+  if (
+    valorLimpio.startsWith('uploads/')
+  ) {
+    const nombrePublico =
+      valorLimpio.replace(
+        /^uploads\//,
+        ''
+      );
+
+    window.open(
+      `http://localhost:5000/uploads/${encodeURIComponent(
+        nombrePublico
+      )}`,
+      '_blank',
+      'noopener,noreferrer'
+    );
+
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // ARCHIVO PRIVADO
+  // ----------------------------------------------------------
+
+  const nombrePrivado =
+    valorLimpio
+      .replace(
+        /^uploads_private\//,
+        ''
+      );
+
+  try {
+    const token =
+      obtenerToken();
+
+    if (!token) {
+      alert(
+        'Tu sesión no es válida. Inicia sesión nuevamente.'
+      );
+      return;
     }
-  };
 
-  const handleCancelarAccion = () => {
-    setNuevoEstado(sol.estado);
-    setMotivo(sol.motivo_decision || '');
-    setMostrarMotivoInput(sol.estado === 'Rechazado');
-    setMostrarEvaluadorInput(false);
-    setEvaluadorSeleccionado(sol.evaluador_id || '');
-  };
+    const respuesta =
+      await fetch(
+        `${API_BASE}/archivos-privados/${encodeURIComponent(
+          nombrePrivado
+        )}`,
+        {
+          method:
+            'GET',
 
-  const guardarCambioEstado = async (estadoDestino, motivoTexto, silencioso = false) => {
-    setEnviando(true);
-    try {
-      const token = sessionStorage.getItem('token') || localStorage.getItem('token');
-      
-      const respuesta = await axios.put(`${API_BASE}/postulaciones/${sol.id}/estado`, {
-        estado: estadoDestino,
-        motivo_decision: estadoDestino === 'Rechazado' ? motivoTexto : null
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-
-      if (respuesta.data.status === 'success') {
-        onActualizarEstado(sol.id, estadoDestino, estadoDestino === 'Rechazado' ? motivoTexto : null);
-        if (!silencioso) {
-          if (estadoDestino !== 'Rechazado') {
-            alert("Estado actualizado correctamente.");
-          } else {
-            alert("Propuesta rechazada con éxito.");
+          headers: {
+            Authorization:
+              `Bearer ${token}`
           }
         }
-      } else {
-        alert("No se pudo actualizar el estado de la propuesta.");
-        handleCancelarAccion();
+      );
+
+    if (!respuesta.ok) {
+      let mensaje =
+        'No fue posible acceder al documento.';
+
+      try {
+        const datos =
+          await respuesta.json();
+
+        mensaje =
+          datos?.message ||
+          datos?.error ||
+          mensaje;
+      } catch {
+        // La respuesta puede no ser JSON.
       }
-    } catch (err) {
-      console.error("Error al actualizar estado:", err);
-      alert(err.response?.data?.message || "Ocurrió un error al actualizar el estado.");
-      handleCancelarAccion();
-    } finally {
-      setEnviando(false);
-    }
-  };
 
-  const handleConfirmarRechazo = async () => {
-    if (!motivo.trim()) {
-      alert("Error: Para rechazar una propuesta debes escribir obligatoriamente el motivo.");
+      alert(
+        mensaje
+      );
+
       return;
     }
-    await guardarCambioEstado('Rechazado', motivo);
-  };
 
-  const handleConfirmarAsignacion = async () => {
-    if (!evaluadorSeleccionado) {
-      alert("Error: Debes seleccionar un evaluador de la lista.");
-      return;
-    }
-    setEnviando(true);
-    try {
-      const token = sessionStorage.getItem('token') || localStorage.getItem('token');
-      
-      const respuesta = await axios.post(`${API_BASE}/asignacion`, {
-        postulacionId: sol.id,
-        evaluadorId: parseInt(evaluadorSeleccionado)
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+    const blob =
+      await respuesta.blob();
 
-      if (respuesta.data.status === 'success') {
-        if (sol.estado !== 'En Evaluación') {
-          await guardarCambioEstado('En Evaluación', null, true);
+    const url =
+      URL.createObjectURL(
+        blob
+      );
+
+    window.open(
+      url,
+      '_blank',
+      'noopener,noreferrer'
+    );
+
+    // Liberar posteriormente el object URL.
+    setTimeout(() => {
+      URL.revokeObjectURL(
+        url
+      );
+    }, 60000);
+  } catch (error) {
+    console.error(
+      'Error descargando documento privado:',
+      error
+    );
+
+    alert(
+      'No fue posible abrir el documento.'
+    );
+  }
+}
+
+function FilaSolicitud({
+  sol,
+  evaluadores,
+  descargarDocumento,
+  getBadgeStyles,
+  onActualizarEstado,
+  onAsignarEvaluador
+}) {
+  const [
+    nuevoEstado,
+    setNuevoEstado
+  ] = useState(
+    sol.estado
+  );
+
+  const [
+    motivo,
+    setMotivo
+  ] = useState(
+    sol.motivo_decision || ''
+  );
+
+  const [
+    mostrarMotivoInput,
+    setMostrarMotivoInput
+  ] = useState(
+    sol.estado ===
+      'Rechazado'
+  );
+
+  const [
+    mostrarEvaluadorInput,
+    setMostrarEvaluadorInput
+  ] = useState(
+    false
+  );
+
+  const [
+    evaluadorSeleccionado,
+    setEvaluadorSeleccionado
+  ] = useState(
+    sol.evaluador_id || ''
+  );
+
+  const [
+    enviando,
+    setEnviando
+  ] = useState(
+    false
+  );
+
+  useEffect(() => {
+    setNuevoEstado(
+      sol.estado
+    );
+
+    setMotivo(
+      sol.motivo_decision || ''
+    );
+
+    setMostrarMotivoInput(
+      sol.estado ===
+        'Rechazado'
+    );
+
+    setEvaluadorSeleccionado(
+      sol.evaluador_id || ''
+    );
+  }, [sol]);
+
+  const handleEstadoChange =
+    async (
+      e
+    ) => {
+      const estadoSeleccionado =
+        e.target.value;
+
+      setNuevoEstado(
+        estadoSeleccionado
+      );
+
+      if (
+        estadoSeleccionado ===
+        'Rechazado'
+      ) {
+        setMostrarMotivoInput(
+          true
+        );
+
+        setMostrarEvaluadorInput(
+          false
+        );
+      } else if (
+        estadoSeleccionado ===
+        'En Evaluación'
+      ) {
+        setMostrarEvaluadorInput(
+          true
+        );
+
+        setMostrarMotivoInput(
+          false
+        );
+      } else {
+        setMostrarMotivoInput(
+          false
+        );
+
+        setMostrarEvaluadorInput(
+          false
+        );
+
+        await guardarCambioEstado(
+          estadoSeleccionado,
+          null
+        );
+      }
+    };
+
+  const handleCancelarAccion =
+    () => {
+      setNuevoEstado(
+        sol.estado
+      );
+
+      setMotivo(
+        sol.motivo_decision || ''
+      );
+
+      setMostrarMotivoInput(
+        sol.estado ===
+          'Rechazado'
+      );
+
+      setMostrarEvaluadorInput(
+        false
+      );
+
+      setEvaluadorSeleccionado(
+        sol.evaluador_id || ''
+      );
+    };
+
+  const guardarCambioEstado =
+    async (
+      estadoDestino,
+      motivoTexto,
+      silencioso = false
+    ) => {
+      setEnviando(
+        true
+      );
+
+      try {
+        const token =
+          obtenerToken();
+
+        if (!token) {
+          throw new Error(
+            'Sesión no válida.'
+          );
         }
-        onAsignarEvaluador(sol.id, evaluadorSeleccionado);
-        alert("Evaluador asignado correctamente.");
-        setMostrarEvaluadorInput(false);
-      } else {
-        alert("No se pudo completar la asignación del evaluador.");
+
+        const respuesta =
+          await axios.put(
+            `${API_BASE}/postulaciones/${sol.id}/estado`,
+            {
+              estado:
+                estadoDestino,
+
+              motivo_decision:
+                estadoDestino ===
+                'Rechazado'
+                  ? motivoTexto
+                  : null
+            },
+            {
+              headers: {
+                Authorization:
+                  `Bearer ${token}`
+              }
+            }
+          );
+
+        if (
+          respuesta.data.status ===
+          'success'
+        ) {
+          onActualizarEstado(
+            sol.id,
+            estadoDestino,
+            estadoDestino ===
+              'Rechazado'
+              ? motivoTexto
+              : null
+          );
+
+          if (
+            !silencioso
+          ) {
+            if (
+              estadoDestino !==
+              'Rechazado'
+            ) {
+              alert(
+                'Estado actualizado correctamente.'
+              );
+            } else {
+              alert(
+                'Propuesta rechazada con éxito.'
+              );
+            }
+          }
+        } else {
+          alert(
+            'No se pudo actualizar el estado de la propuesta.'
+          );
+
+          handleCancelarAccion();
+        }
+      } catch (err) {
+        console.error(
+          'Error al actualizar estado:',
+          err
+        );
+
+        alert(
+          err.response?.data?.message ||
+          err.message ||
+          'Ocurrió un error al actualizar el estado.'
+        );
+
+        handleCancelarAccion();
+      } finally {
+        setEnviando(
+          false
+        );
       }
-    } catch (err) {
-      console.error("Error al asignar evaluador:", err);
-      alert(err.response?.data?.message || "Ocurrió un error al asignar el evaluador.");
-    } finally {
-      setEnviando(false);
-    }
-  };
+    };
+
+  const handleConfirmarRechazo =
+    async () => {
+      if (
+        !motivo.trim()
+      ) {
+        alert(
+          'Error: Para rechazar una propuesta debes escribir obligatoriamente el motivo.'
+        );
+
+        return;
+      }
+
+      await guardarCambioEstado(
+        'Rechazado',
+        motivo
+      );
+    };
+
+  const handleConfirmarAsignacion =
+    async () => {
+      if (
+        !evaluadorSeleccionado
+      ) {
+        alert(
+          'Error: Debes seleccionar un evaluador de la lista.'
+        );
+
+        return;
+      }
+
+      setEnviando(
+        true
+      );
+
+      try {
+        const token =
+          obtenerToken();
+
+        if (!token) {
+          throw new Error(
+            'Sesión no válida.'
+          );
+        }
+
+        // ==================================================
+        // MIGRACIÓN DEFINITIVA
+        // ==================================================
+        //
+        // Antes:
+        // /api/asignacion
+        //
+        // Ahora:
+        // /api/asignaciones
+        // ==================================================
+
+        const respuesta =
+          await axios.post(
+            `${API_BASE}/asignaciones`,
+            {
+              postulacionId:
+                sol.id,
+
+              evaluadorId:
+                parseInt(
+                  evaluadorSeleccionado,
+                  10
+                )
+            },
+            {
+              headers: {
+                Authorization:
+                  `Bearer ${token}`
+              }
+            }
+          );
+
+        if (
+          respuesta.data.status ===
+          'success'
+        ) {
+          if (
+            sol.estado !==
+            'En Evaluación'
+          ) {
+            await guardarCambioEstado(
+              'En Evaluación',
+              null,
+              true
+            );
+          }
+
+          onAsignarEvaluador(
+            sol.id,
+            evaluadorSeleccionado
+          );
+
+          alert(
+            'Evaluador asignado correctamente.'
+          );
+
+          setMostrarEvaluadorInput(
+            false
+          );
+        } else {
+          alert(
+            'No se pudo completar la asignación del evaluador.'
+          );
+        }
+      } catch (err) {
+        console.error(
+          'Error al asignar evaluador:',
+          err
+        );
+
+        alert(
+          err.response?.data?.message ||
+          err.message ||
+          'Ocurrió un error al asignar el evaluador.'
+        );
+      } finally {
+        setEnviando(
+          false
+        );
+      }
+    };
 
   return (
     <tr className="hover:bg-slate-50/40 transition-colors group border-b border-slate-100">
       <td className="py-5 px-6 max-w-xs">
         <span className="inline-block px-2.5 py-0.5 rounded-lg text-xs font-mono font-bold bg-slate-100 text-slate-700 border border-slate-200/50 mb-1.5">
-          {sol.codigoPropuesta || 'SIN CÓDIGO'}
+          {sol.codigoPropuesta ||
+            'SIN CÓDIGO'}
         </span>
+
         <h3 className="font-bold text-slate-800 line-clamp-2 leading-tight group-hover:text-[#5B9BD5] transition-colors">
           {sol.titulo_propuesta}
         </h3>
+
         {sol.observaciones && (
           <p className="text-[11px] text-slate-400 mt-1 italic line-clamp-1">
             Nota: "{sol.observaciones}"
           </p>
         )}
-        {sol.estado === 'Rechazado' && sol.motivo_decision && !mostrarMotivoInput && (
-          <div className="mt-2 p-2 bg-red-50/60 border border-red-100/50 rounded-xl text-[11px] text-red-700 leading-relaxed">
-            <strong>Motivo registrado:</strong> {sol.motivo_decision}
-          </div>
-        )}
+
+        {sol.estado ===
+          'Rechazado' &&
+          sol.motivo_decision &&
+          !mostrarMotivoInput && (
+            <div className="mt-2 p-2 bg-red-50/60 border border-red-100/50 rounded-xl text-[11px] text-red-700 leading-relaxed">
+              <strong>
+                Motivo registrado:
+              </strong>{' '}
+              {sol.motivo_decision}
+            </div>
+          )}
+
         {sol.evaluador_nombre && (
           <div className="mt-2 p-2.5 bg-blue-50/60 border border-blue-100/50 rounded-xl text-[11px] text-blue-700 leading-relaxed space-y-1 shadow-sm">
             <div>
-              <strong>Evaluador asignado:</strong> <span className="font-semibold text-slate-800">{sol.evaluador_nombre}</span>
+              <strong>
+                Evaluador asignado:
+              </strong>{' '}
+              <span className="font-semibold text-slate-800">
+                {sol.evaluador_nombre}
+              </span>
             </div>
-            {sol.puntaje !== undefined && sol.puntaje !== null && (
-              <div className="text-[10px] text-blue-800 bg-white/50 px-2 py-1.5 rounded-lg border border-blue-100 mt-1">
-                <strong>Calificación:</strong> <span className="font-extrabold">{sol.puntaje} / 100</span>
-              </div>
-            )}
+
+            {sol.puntaje !==
+              undefined &&
+              sol.puntaje !==
+                null && (
+                <div className="text-[10px] text-blue-800 bg-white/50 px-2 py-1.5 rounded-lg border border-blue-100 mt-1">
+                  <strong>
+                    Calificación:
+                  </strong>{' '}
+                  <span className="font-extrabold">
+                    {sol.puntaje} / 100
+                  </span>
+                </div>
+              )}
+
             {sol.comentarios && (
               <div className="text-[10px] text-slate-600 italic bg-white/70 p-2 rounded-lg border border-blue-100/30 mt-1 max-h-16 overflow-y-auto">
-                <strong>Comentarios:</strong> "{sol.comentarios}"
+                <strong>
+                  Comentarios:
+                </strong>{' '}
+                "{sol.comentarios}"
               </div>
             )}
           </div>
@@ -158,48 +596,80 @@ function FilaSolicitud({ sol, evaluadores, descargarDocumento, getBadgeStyles, o
       </td>
 
       <td className="py-5 px-6">
-        <div className="font-semibold text-slate-800">{sol.docente_nombre || 'Docente Asociado'}</div>
-        <div className="text-xs text-slate-500 mt-0.5">{sol.docente_correo || 'Correo no especificado'}</div>
+        <div className="font-semibold text-slate-800">
+          {sol.docente_nombre ||
+            'Docente Asociado'}
+        </div>
+
+        <div className="text-xs text-slate-500 mt-0.5">
+          {sol.docente_correo ||
+            'Correo no especificado'}
+        </div>
+
         <div className="inline-flex items-center gap-1 mt-1.5 text-xs font-medium text-slate-500 bg-slate-100/60 px-2 py-0.5 rounded-md border border-slate-200/40">
-          📍 {sol.nombre_sede || `Sede (ID: ${sol.sede})`}
+          📍{' '}
+          {sol.nombre_sede ||
+            `Sede (ID: ${sol.sede})`}
         </div>
       </td>
 
       <td className="py-5 px-6">
         <div className="grid grid-cols-2 gap-1.5 max-w-[280px]">
           <button
-            onClick={() => descargarDocumento(sol.presupuesto)}
+            onClick={() =>
+              descargarDocumento(
+                sol.presupuesto
+              )
+            }
             className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold text-slate-600 bg-slate-50 hover:bg-blue-50 hover:text-[#5B9BD5] border border-slate-200/60 transition-colors flex items-center justify-center gap-1"
             title="Presupuesto"
           >
             📋 Presupuesto
           </button>
+
           <button
-            onClick={() => descargarDocumento(sol.cronograma)}
+            onClick={() =>
+              descargarDocumento(
+                sol.cronograma
+              )
+            }
             className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold text-slate-600 bg-slate-50 hover:bg-blue-50 hover:text-[#5B9BD5] border border-slate-200/60 transition-colors flex items-center justify-center gap-1"
             title="Cronograma"
           >
             📅 Cronograma
           </button>
+
           <button
-            onClick={() => descargarDocumento(sol.honestidad)}
+            onClick={() =>
+              descargarDocumento(
+                sol.honestidad
+              )
+            }
             className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold text-slate-600 bg-slate-50 hover:bg-blue-50 hover:text-[#5B9BD5] border border-slate-200/60 transition-colors flex items-center justify-center gap-1"
             title="Declaración de Honestidad"
           >
             ✍️ Honestidad
           </button>
+
           <button
-            onClick={() => descargarDocumento(sol.id_documento)}
+            onClick={() =>
+              descargarDocumento(
+                sol.id_documento
+              )
+            }
             className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold text-slate-600 bg-slate-50 hover:bg-blue-50 hover:text-[#5B9BD5] border border-slate-200/60 transition-colors flex items-center justify-center gap-1"
             title="Soporte de Identidad"
           >
             🪪 Identidad
           </button>
 
-          {/* DOCUMENTO NUEVO: ACTA DE EVALUACIÓN (Ocupa las dos columnas si existe) */}
           {sol.archivo_evaluacion && (
             <button
-              onClick={() => descargarDocumento(sol.archivo_evaluacion)}
+              onClick={() =>
+                descargarDocumento(
+                  sol.archivo_evaluacion
+                )
+              }
               className="col-span-2 mt-1 px-2.5 py-2 rounded-xl text-[10px] font-extrabold text-emerald-800 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200 transition-colors flex items-center justify-center gap-1.5 shadow-sm"
               title="Descargar Acta de Evaluación Final"
             >
@@ -213,29 +683,51 @@ function FilaSolicitud({ sol, evaluadores, descargarDocumento, getBadgeStyles, o
         <div className="flex flex-col gap-2 min-w-[170px]">
           <select
             value={nuevoEstado}
-            onChange={handleEstadoChange}
+            onChange={
+              handleEstadoChange
+            }
             disabled={enviando}
-            className={`w-full px-3 py-1.5 rounded-xl text-xs font-bold border focus:outline-none transition-all cursor-pointer ${getBadgeStyles(nuevoEstado)}`}
+            className={`w-full px-3 py-1.5 rounded-xl text-xs font-bold border focus:outline-none transition-all cursor-pointer ${getBadgeStyles(
+              nuevoEstado
+            )}`}
           >
-            <option value="Radicado">📁 Radicado</option>
-            <option value="En Evaluación">🔍 En Evaluación</option>
-            <option value="Aprobado">✅ Aprobado</option>
-            <option value="Rechazado">❌ Rechazado</option>
+            <option value="Radicado">
+              📁 Radicado
+            </option>
+
+            <option value="En Evaluación">
+              🔍 En Evaluación
+            </option>
+
+            <option value="Aprobado">
+              ✅ Aprobado
+            </option>
+
+            <option value="Rechazado">
+              ❌ Rechazado
+            </option>
           </select>
 
           <button
-            type="button"
             onClick={() => {
-              if (mostrarEvaluadorInput) {
+              if (
+                mostrarEvaluadorInput
+              ) {
                 handleCancelarAccion();
               } else {
-                setMostrarEvaluadorInput(true);
-                setMostrarMotivoInput(false);
+                setMostrarEvaluadorInput(
+                  true
+                );
+                setMostrarMotivoInput(
+                  false
+                );
               }
             }}
             className="w-full py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-[#5B9BD5] border border-slate-200 hover:border-[#5B9BD5]/20 rounded-xl text-[10px] font-extrabold transition-all flex items-center justify-center gap-1 cursor-pointer"
           >
-            {sol.evaluador_id ? '👥 Cambiar Evaluador' : '👥 Asignar Evaluador'}
+            {sol.evaluador_id
+              ? '👥 Cambiar Evaluador'
+              : '👥 Asignar Evaluador'}
           </button>
 
           {mostrarEvaluadorInput && (
@@ -243,31 +735,64 @@ function FilaSolicitud({ sol, evaluadores, descargarDocumento, getBadgeStyles, o
               <label className="block text-[9px] uppercase font-extrabold text-amber-800 tracking-wider">
                 Seleccionar Evaluador *
               </label>
+
               <select
-                value={evaluadorSeleccionado}
-                onChange={(e) => setEvaluadorSeleccionado(e.target.value)}
+                value={
+                  evaluadorSeleccionado
+                }
+                onChange={(e) =>
+                  setEvaluadorSeleccionado(
+                    e.target.value
+                  )
+                }
                 disabled={enviando}
                 className="w-full p-2 border border-amber-200 rounded-lg text-[11px] focus:ring-2 focus:ring-amber-200 outline-none bg-white text-slate-700 font-medium"
               >
-                <option value="">-- Elige un docente --</option>
-                {evaluadores.map((ev) => (
-                  <option key={ev.id} value={ev.id}>
-                    {ev.nombre_completo} ({ev.correo})
-                  </option>
-                ))}
+                <option value="">
+                  -- Elige un docente --
+                </option>
+
+                {evaluadores.map(
+                  (ev) => (
+                    <option
+                      key={ev.id}
+                      value={ev.id}
+                    >
+                      {ev.nombre_completo}{' '}
+                      (
+                      {ev.email ||
+                        ev.correo ||
+                        'sin correo'}
+                      )
+                    </option>
+                  )
+                )}
               </select>
+
               <div className="flex gap-1.5">
                 <button
-                  onClick={handleConfirmarAsignacion}
-                  disabled={enviando || !evaluadorSeleccionado}
+                  onClick={
+                    handleConfirmarAsignacion
+                  }
+                  disabled={
+                    enviando ||
+                    !evaluadorSeleccionado
+                  }
                   className="flex-1 py-1.5 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-400 text-white text-[10px] font-bold rounded-lg transition-colors cursor-pointer"
                 >
-                  {enviando ? 'Asignando...' : 'Confirmar'}
+                  {enviando
+                    ? 'Asignando...'
+                    : 'Confirmar'}
                 </button>
+
                 <button
                   type="button"
-                  onClick={handleCancelarAccion}
-                  disabled={enviando}
+                  onClick={
+                    handleCancelarAccion
+                  }
+                  disabled={
+                    enviando
+                  }
                   className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-[10px] font-bold rounded-lg transition-colors cursor-pointer"
                 >
                   Cancelar
@@ -281,27 +806,46 @@ function FilaSolicitud({ sol, evaluadores, descargarDocumento, getBadgeStyles, o
               <label className="block text-[9px] uppercase font-extrabold text-red-700 tracking-wider">
                 Motivo de Rechazo Obligatorio *
               </label>
+
               <textarea
                 value={motivo}
-                onChange={(e) => setMotivo(e.target.value)}
+                onChange={(e) =>
+                  setMotivo(
+                    e.target.value
+                  )
+                }
                 placeholder="Especifica el por qué..."
                 rows="2"
-                disabled={enviando}
+                disabled={
+                  enviando
+                }
                 className="w-full p-2 border border-red-200 rounded-lg text-[11px] focus:ring-2 focus:ring-red-200 outline-none resize-none bg-white text-slate-700"
                 required
               />
+
               <div className="flex gap-1.5">
                 <button
-                  onClick={handleConfirmarRechazo}
-                  disabled={enviando}
+                  onClick={
+                    handleConfirmarRechazo
+                  }
+                  disabled={
+                    enviando
+                  }
                   className="flex-1 py-1.5 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white text-[10px] font-bold rounded-lg transition-colors cursor-pointer"
                 >
-                  {enviando ? 'Guardando...' : 'Confirmar'}
+                  {enviando
+                    ? 'Guardando...'
+                    : 'Confirmar'}
                 </button>
+
                 <button
                   type="button"
-                  onClick={handleCancelarAccion}
-                  disabled={enviando}
+                  onClick={
+                    handleCancelarAccion
+                  }
+                  disabled={
+                    enviando
+                  }
                   className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-[10px] font-bold rounded-lg transition-colors cursor-pointer"
                 >
                   Cancelar
@@ -311,7 +855,12 @@ function FilaSolicitud({ sol, evaluadores, descargarDocumento, getBadgeStyles, o
           )}
 
           <span className="text-[10px] text-slate-400 text-center font-medium">
-            Registrado: {sol.fecha_radicacion ? new Date(sol.fecha_radicacion).toLocaleDateString() : 'Recientemente'}
+            Registrado:{' '}
+            {sol.fecha_radicacion
+              ? new Date(
+                  sol.fecha_radicacion
+                ).toLocaleDateString()
+              : 'Recientemente'}
           </span>
         </div>
       </td>
@@ -319,113 +868,263 @@ function FilaSolicitud({ sol, evaluadores, descargarDocumento, getBadgeStyles, o
   );
 }
 
-function RevisarSolicitudes({ usuario }) {
-  const [solicitudes, setSolicitudes] = useState([]);
-  const [evaluadores, setEvaluadores] = useState([]);
-  const [cargando, setCargando] = useState(true);
-  const [error, setError] = useState(null);
-  const [busqueda, setBusqueda] = useState('');
-  const [filtroEstado, setFiltroEstado] = useState('Todos');
+function RevisarSolicitudes({
+  usuario
+}) {
+  const [
+    solicitudes,
+    setSolicitudes
+  ] = useState([]);
 
-  const obtenerDatos = async () => {
-    try {
-      setCargando(true);
-      setError(null);
-      const token = sessionStorage.getItem('token') || localStorage.getItem('token');
+  const [
+    evaluadores,
+    setEvaluadores
+  ] = useState([]);
 
-      const respuestaPost = await axios.get(`${API_BASE}/postulaciones`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+  const [
+    cargando,
+    setCargando
+  ] = useState(true);
 
-      if (respuestaPost.data.status === 'success') {
-        const listado = Array.isArray(respuestaPost.data.data) ? respuestaPost.data.data : respuestaPost.data.data?.postulaciones || [];
-        setSolicitudes(listado);
-      } else {
-        throw new Error(respuestaPost.data.message || 'Error al obtener solicitudes.');
+  const [
+    error,
+    setError
+  ] = useState(null);
+
+  const [
+    busqueda,
+    setBusqueda
+  ] = useState('');
+
+  const [
+    filtroEstado,
+    setFiltroEstado
+  ] = useState(
+    'Todos'
+  );
+
+  const obtenerDatos =
+    async () => {
+      try {
+        setCargando(
+          true
+        );
+
+        setError(
+          null
+        );
+
+        const token =
+          obtenerToken();
+
+        if (!token) {
+          throw new Error(
+            'Sesión no válida.'
+          );
+        }
+
+        const respuestaPost =
+          await axios.get(
+            `${API_BASE}/postulaciones`,
+            {
+              headers: {
+                Authorization:
+                  `Bearer ${token}`
+              }
+            }
+          );
+
+        if (
+          respuestaPost.data.status ===
+          'success'
+        ) {
+          const listado =
+            Array.isArray(
+              respuestaPost.data.data
+            )
+              ? respuestaPost.data.data
+              : respuestaPost.data.data
+                  ?.postulaciones ||
+                [];
+
+          setSolicitudes(
+            listado
+          );
+        } else {
+          throw new Error(
+            respuestaPost.data.message ||
+              'Error al obtener solicitudes.'
+          );
+        }
+
+        const respuestaEv =
+          await axios.get(
+            `${API_BASE}/usuarios/evaluadores`,
+            {
+              headers: {
+                Authorization:
+                  `Bearer ${token}`
+              }
+            }
+          );
+
+        if (
+          respuestaEv.data.status ===
+          'success'
+        ) {
+          setEvaluadores(
+            respuestaEv.data.data ||
+              []
+          );
+        }
+      } catch (err) {
+        console.error(
+          'Error al cargar datos en panel de revisión:',
+          err
+        );
+
+        setError(
+          err.response?.data?.message ||
+          err.message
+        );
+      } finally {
+        setCargando(
+          false
+        );
       }
-
-      const respuestaEv = await axios.get(`${API_BASE}/usuarios/evaluadores`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-
-      if (respuestaEv.data.status === 'success') {
-        setEvaluadores(respuestaEv.data.data || []);
-      }
-    } catch (err) {
-      console.error("Error al cargar datos en panel de revisión:", err);
-      setError(err.response?.data?.message || err.message);
-    } finally {
-      setCargando(false);
-    }
-  };
+    };
 
   useEffect(() => {
     obtenerDatos();
   }, []);
 
-  const descargarDocumento = (nombreArchivo) => {
-    if (!nombreArchivo) {
-      alert("Este documento no fue cargado correctamente o no está disponible.");
-      return;
-    }
+  const descargarDocumento =
+    (
+      nombreArchivo
+    ) => {
+      descargarDocumentoSeguro(
+        nombreArchivo
+      );
+    };
 
-    if (nombreArchivo.startsWith('http')) {
-      window.open(nombreArchivo, '_blank');
-      return;
-    }
+  const handleActualizarEstadoLocal =
+    (
+      id,
+      nuevoEstado,
+      motivoDecision
+    ) => {
+      setSolicitudes(
+        (prev) =>
+          prev.map(
+            (sol) =>
+              sol.id ===
+              id
+                ? {
+                    ...sol,
+                    estado:
+                      nuevoEstado,
+                    motivo_decision:
+                      motivoDecision
+                  }
+                : sol
+          )
+      );
+    };
 
-    let nombreLimpio = nombreArchivo.replace(/^\/+/, '');
+  const handleAsignarEvaluadorLocal =
+    (
+      id,
+      evaluadorId
+    ) => {
+      const evaluadorEncontrado =
+        evaluadores.find(
+          (ev) =>
+            ev.id ===
+            parseInt(
+              evaluadorId,
+              10
+            )
+        );
 
-    if (nombreLimpio.startsWith('uploads/')) {
-      nombreLimpio = nombreLimpio.replace(/^uploads\//, '');
-    }
+      setSolicitudes(
+        (prev) =>
+          prev.map(
+            (sol) =>
+              sol.id ===
+              id
+                ? {
+                    ...sol,
+                    evaluador_id:
+                      evaluadorId,
+                    evaluador_nombre:
+                      evaluadorEncontrado
+                        ? evaluadorEncontrado.nombre_completo
+                        : 'Evaluador asignado'
+                  }
+                : sol
+          )
+      );
+    };
 
-    const urlCompleta = `http://localhost:5000/uploads/${nombreLimpio}`;
-    window.open(urlCompleta, '_blank');
-  };
+  const solicitudesFiltradas =
+    solicitudes.filter(
+      (sol) => {
+        const termino =
+          busqueda.toLowerCase();
 
-  const handleActualizarEstadoLocal = (id, nuevoEstado, motivoDecision) => {
-    setSolicitudes(prev => 
-      prev.map(sol => sol.id === id ? { ...sol, estado: nuevoEstado, motivo_decision: motivoDecision } : sol)
+        const coincideTexto =
+          sol.codigoPropuesta
+            ?.toLowerCase()
+            .includes(
+              termino
+            ) ||
+          sol.titulo_propuesta
+            ?.toLowerCase()
+            .includes(
+              termino
+            ) ||
+          sol.docente_nombre
+            ?.toLowerCase()
+            .includes(
+              termino
+            );
+
+        const coincideEstado =
+          filtroEstado ===
+            'Todos' ||
+          sol.estado ===
+            filtroEstado;
+
+        return (
+          coincideTexto &&
+          coincideEstado
+        );
+      }
     );
-  };
 
-  const handleAsignarEvaluadorLocal = (id, evaluadorId) => {
-    const evaluadorEncontrado = evaluadores.find(ev => ev.id === parseInt(evaluadorId));
-    setSolicitudes(prev => 
-      prev.map(sol => sol.id === id ? { 
-        ...sol, 
-        evaluador_id: evaluadorId, 
-        evaluador_nombre: evaluadorEncontrado ? evaluadorEncontrado.nombre_completo : 'Evaluador asignado' 
-      } : sol)
-    );
-  };
+  const getBadgeStyles =
+    (
+      estado
+    ) => {
+      switch (
+        estado
+      ) {
+        case 'Aprobado':
+          return 'bg-emerald-50 text-emerald-700 border-emerald-200/60';
 
-  const solicitudesFiltradas = solicitudes.filter(sol => {
-    const coincideTexto = 
-      sol.codigoPropuesta?.toLowerCase().includes(busqueda.toLowerCase()) ||
-      sol.titulo_propuesta?.toLowerCase().includes(busqueda.toLowerCase()) ||
-      sol.docente_nombre?.toLowerCase().includes(busqueda.toLowerCase());
+        case 'Rechazado':
+          return 'bg-rose-50 text-rose-700 border-rose-200/60';
 
-    const coincideEstado = filtroEstado === 'Todos' || sol.estado === filtroEstado;
+        case 'En Evaluación':
+          return 'bg-amber-50 text-amber-700 border-amber-200/60';
 
-    return coincideTexto && coincideEstado;
-  });
+        case 'Radicado':
+          return 'bg-blue-50 text-blue-700 border-blue-200/60';
 
-  const getBadgeStyles = (estado) => {
-    switch (estado) {
-      case 'Aprobado':
-        return 'bg-emerald-50 text-emerald-700 border-emerald-200/60';
-      case 'Rechazado':
-        return 'bg-rose-50 text-rose-700 border-rose-200/60';
-      case 'En Evaluación':
-        return 'bg-amber-50 text-amber-700 border-amber-200/60';
-      case 'Radicado':
-        return 'bg-blue-50 text-blue-700 border-blue-200/60';
-      default:
-        return 'bg-slate-50 text-slate-700 border-slate-200/60';
-    }
-  };
+        default:
+          return 'bg-slate-50 text-slate-700 border-slate-200/60';
+      }
+    };
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 py-2">
@@ -434,13 +1133,20 @@ function RevisarSolicitudes({ usuario }) {
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-[#5B9BD5]/10 text-[#5B9BD5] mb-2 uppercase tracking-wide">
             🛡️ Consola del Administrador
           </span>
-          <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">Revisión de Solicitudes</h1>
+
+          <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">
+            Revisión de Solicitudes
+          </h1>
+
           <p className="text-sm text-slate-500 mt-1">
             Gestiona, descarga la documentación y actualiza los estados de las propuestas de investigación radicadas.
           </p>
         </div>
-        <button 
-          onClick={obtenerDatos}
+
+        <button
+          onClick={
+            obtenerDatos
+          }
           className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-[#5B9BD5] bg-white border border-slate-200 hover:border-[#5B9BD5]/30 rounded-xl transition-all shadow-sm flex items-center gap-2"
         >
           🔄 Sincronizar Bandeja
@@ -452,46 +1158,97 @@ function RevisarSolicitudes({ usuario }) {
           <input
             type="text"
             placeholder="Buscar por código de propuesta, título o nombre del docente..."
-            value={busqueda}
-            onChange={(e) => setBusqueda(e.target.value)}
+            value={
+              busqueda
+            }
+            onChange={(e) =>
+              setBusqueda(
+                e.target.value
+              )
+            }
             className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-[#5B9BD5]/20 focus:border-[#5B9BD5] transition-all text-sm font-medium text-slate-700"
           />
-          <span className="absolute left-4 top-3.5 text-slate-400 text-sm">🔍</span>
+
+          <span className="absolute left-4 top-3.5 text-slate-400 text-sm">
+            🔍
+          </span>
         </div>
 
         <div>
           <select
-            value={filtroEstado}
-            onChange={(e) => setFiltroEstado(e.target.value)}
+            value={
+              filtroEstado
+            }
+            onChange={(e) =>
+              setFiltroEstado(
+                e.target.value
+              )
+            }
             className="w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-[#5B9BD5]/20 focus:border-[#5B9BD5] transition-all text-sm text-slate-700 font-semibold"
           >
-            <option value="Todos">Filtro: Todos los Estados</option>
-            <option value="Radicado">Radicado</option>
-            <option value="En Evaluación">En Evaluación</option>
-            <option value="Aprobado">Aprobado</option>
-            <option value="Rechazado">Rechazado</option>
+            <option value="Todos">
+              Filtro: Todos los Estados
+            </option>
+
+            <option value="Radicado">
+              Radicado
+            </option>
+
+            <option value="En Evaluación">
+              En Evaluación
+            </option>
+
+            <option value="Aprobado">
+              Aprobado
+            </option>
+
+            <option value="Rechazado">
+              Rechazado
+            </option>
           </select>
         </div>
       </div>
 
       {cargando ? (
         <div className="bg-white p-16 rounded-3xl shadow-sm border border-slate-100 text-center">
-          <div className="animate-spin inline-block w-8 h-8 border-[3px] border-current border-t-transparent text-[#5B9BD5] rounded-full" role="status">
-            <span className="sr-only">Cargando...</span>
+          <div className="animate-spin inline-block w-8 h-8 border-[3px] border-current border-t-transparent text-[#5B9BD5] rounded-full">
+            <span className="sr-only">
+              Cargando...
+            </span>
           </div>
-          <p className="text-slate-500 text-sm font-medium mt-4">Consultando base de datos de ArchiveX...</p>
+
+          <p className="text-slate-500 text-sm font-medium mt-4">
+            Consultando base de datos de ArchiveX...
+          </p>
         </div>
       ) : error ? (
-        <div className="bg-red-50/50 p-8 rounded-3xl border border-red-100/60 text-center max-w-md mx-auto animate-fade-in">
-          <span className="text-4xl">❌</span>
-          <h3 className="text-lg font-bold text-red-800 mt-4">Error de Comunicación</h3>
-          <p className="text-red-600 text-xs mt-1 leading-relaxed">{error}</p>
+        <div className="bg-red-50/50 p-8 rounded-3xl border border-red-100/60 text-center max-w-md mx-auto">
+          <span className="text-4xl">
+            ❌
+          </span>
+
+          <h3 className="text-lg font-bold text-red-800 mt-4">
+            Error de Comunicación
+          </h3>
+
+          <p className="text-red-600 text-xs mt-1 leading-relaxed">
+            {error}
+          </p>
         </div>
-      ) : solicitudesFiltradas.length === 0 ? (
+      ) : solicitudesFiltradas.length ===
+        0 ? (
         <div className="bg-white p-16 rounded-3xl shadow-sm border border-slate-100 text-center">
-          <span className="text-5xl">📁</span>
-          <h3 className="text-lg font-bold text-slate-700 mt-4">No se encontraron propuestas</h3>
-          <p className="text-slate-400 text-sm mt-1">No hay solicitudes que coincidan con los filtros aplicados.</p>
+          <span className="text-5xl">
+            📁
+          </span>
+
+          <h3 className="text-lg font-bold text-slate-700 mt-4">
+            No se encontraron propuestas
+          </h3>
+
+          <p className="text-slate-400 text-sm mt-1">
+            No hay solicitudes que coincidan con los filtros aplicados.
+          </p>
         </div>
       ) : (
         <div className="bg-white rounded-3xl shadow-md border border-slate-100/80 overflow-hidden transition-all">
@@ -499,24 +1256,48 @@ function RevisarSolicitudes({ usuario }) {
             <table className="w-full table-auto border-collapse text-left">
               <thead>
                 <tr className="bg-slate-50/80 border-b border-slate-100 text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
-                  <th className="py-4.5 px-6">Propuesta / Código</th>
-                  <th className="py-4.5 px-6">Autor / Sede</th>
-                  <th className="py-4.5 px-6">Documentación Requerida (PDFs)</th>
-                  <th className="py-4.5 px-6">Estado de Evaluación</th>
+                  <th className="py-4.5 px-6">
+                    Propuesta / Código
+                  </th>
+
+                  <th className="py-4.5 px-6">
+                    Autor / Sede
+                  </th>
+
+                  <th className="py-4.5 px-6">
+                    Documentación Requerida (PDFs)
+                  </th>
+
+                  <th className="py-4.5 px-6">
+                    Estado de Evaluación
+                  </th>
                 </tr>
               </thead>
+
               <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
-                {solicitudesFiltradas.map((sol) => (
-                  <FilaSolicitud
-                    key={sol.id}
-                    sol={sol}
-                    evaluadores={evaluadores}
-                    descargarDocumento={descargarDocumento}
-                    getBadgeStyles={getBadgeStyles}
-                    onActualizarEstado={handleActualizarEstadoLocal}
-                    onAsignarEvaluador={handleAsignarEvaluadorLocal}
-                  />
-                ))}
+                {solicitudesFiltradas.map(
+                  (sol) => (
+                    <FilaSolicitud
+                      key={sol.id}
+                      sol={sol}
+                      evaluadores={
+                        evaluadores
+                      }
+                      descargarDocumento={
+                        descargarDocumento
+                      }
+                      getBadgeStyles={
+                        getBadgeStyles
+                      }
+                      onActualizarEstado={
+                        handleActualizarEstadoLocal
+                      }
+                      onAsignarEvaluador={
+                        handleAsignarEvaluadorLocal
+                      }
+                    />
+                  )
+                )}
               </tbody>
             </table>
           </div>

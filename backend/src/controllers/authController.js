@@ -1,19 +1,73 @@
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const pool = require('../config/db.js');
+const bcrypt =
+  require('bcrypt');
 
-/**
- * Obtiene el secreto JWT únicamente desde variables de entorno.
- *
- * IMPORTANTE:
- * No existe ningún fallback hardcodeado.
- * Esto evita que la aplicación pueda firmar o verificar tokens
- * utilizando un secreto público conocido.
- */
+const jwt =
+  require('jsonwebtoken');
+
+const crypto =
+  require('crypto');
+
+const pool =
+  require('../config/db.js');
+
+const {
+  ADMIN_EMAIL
+} =
+  require('../config/securityConfig');
+
+const {
+  enviarCorreoRecuperacion
+} =
+  require('../services/emailService');
+
+// ============================================================
+// CONFIGURACIÓN
+// ============================================================
+
+const MIN_PASSWORD_LENGTH =
+  8;
+
+const MAX_PASSWORD_LENGTH =
+  128;
+
+const MAX_NAME_LENGTH =
+  150;
+
+const MAX_EMAIL_LENGTH =
+  100;
+
+const MAX_CEDULA_LENGTH =
+  20;
+
+const JWT_EXPIRATION =
+  '24h';
+
+const JWT_ALGORITHM =
+  'HS256';
+
+const RECAPTCHA_VERIFY_URL =
+  'https://www.google.com/recaptcha/api/siteverify';
+
+const PASSWORD_RESET_TOKEN_BYTES =
+  32;
+
+const PASSWORD_RESET_EXPIRATION_MINUTES =
+  30;
+
+// ============================================================
+// OBTENER SECRET JWT
+// ============================================================
+
 const obtenerJwtSecret = () => {
-  const secret = process.env.JWT_SECRET;
+  const secret =
+    process.env.JWT_SECRET;
 
-  if (!secret || secret.trim().length < 32) {
+  if (
+    typeof secret !==
+      'string' ||
+    secret.trim().length <
+      32
+  ) {
     throw new Error(
       'JWT_SECRET no está configurado correctamente. Debe existir una variable de entorno segura de al menos 32 caracteres.'
     );
@@ -22,396 +76,1431 @@ const obtenerJwtSecret = () => {
   return secret;
 };
 
-/**
- * Verifica el token de reCAPTCHA contra Google.
- *
- * La verificación falla de forma cerrada:
- * si Google no responde o devuelve un resultado inválido,
- * la autenticación NO continúa.
- */
-const verificarRecaptcha = async (captchaToken) => {
-  if (!captchaToken || typeof captchaToken !== 'string') {
-    return {
-      success: false,
-      error: 'missing-input-response'
-    };
+// ============================================================
+// NORMALIZAR EMAIL
+// ============================================================
+
+const normalizarEmail = (
+  email
+) => {
+  if (
+    typeof email !==
+    'string'
+  ) {
+    return null;
   }
 
-  const secretKey = process.env.RECAPTCHA_SECRET_KEY;
+  const valor =
+    email
+      .trim()
+      .toLowerCase();
 
-  if (!secretKey || !secretKey.trim()) {
-    console.error(
-      'RECAPTCHA_SECRET_KEY no está configurado en las variables de entorno.'
-    );
-
-    return {
-      success: false,
-      error: 'missing-input-secret'
-    };
+  if (!valor) {
+    return null;
   }
 
-  try {
-    const body = new URLSearchParams({
-      secret: secretKey,
-      response: captchaToken
-    });
+  if (
+    valor.length >
+    MAX_EMAIL_LENGTH
+  ) {
+    return null;
+  }
 
-    const captchaVerify = await fetch(
-      'https://www.google.com/recaptcha/api/siteverify',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: body.toString()
-      }
-    );
+  const patron =
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-    if (!captchaVerify.ok) {
-      console.error(
-        `reCAPTCHA respondió con HTTP ${captchaVerify.status}.`
+  if (
+    !patron.test(valor)
+  ) {
+    return null;
+  }
+
+  return valor;
+};
+
+// ============================================================
+// VALIDAR CONTRASEÑA
+// ============================================================
+
+const validarPassword = (
+  password
+) => {
+  if (
+    typeof password !==
+    'string'
+  ) {
+    return false;
+  }
+
+  if (
+    password.length <
+      MIN_PASSWORD_LENGTH ||
+    password.length >
+      MAX_PASSWORD_LENGTH
+  ) {
+    return false;
+  }
+
+  return true;
+};
+
+// ============================================================
+// GENERAR TOKEN DE RECUPERACIÓN
+// ============================================================
+
+const generarTokenRecuperacion =
+  () => {
+    return crypto
+      .randomBytes(
+        PASSWORD_RESET_TOKEN_BYTES
+      )
+      .toString(
+        'hex'
       );
+  };
 
+// ============================================================
+// HASH TOKEN DE RECUPERACIÓN
+// ============================================================
+//
+// El token que llega por correo NO se guarda directamente
+// en la base de datos.
+//
+// Se guarda SHA-256(token).
+// ============================================================
+
+const hashToken =
+  (
+    token
+  ) => {
+    return crypto
+      .createHash(
+        'sha256'
+      )
+      .update(
+        token,
+        'utf8'
+      )
+      .digest(
+        'hex'
+      );
+  };
+
+// ============================================================
+// VERIFICAR RECAPTCHA
+// ============================================================
+
+const verificarRecaptcha =
+  async (
+    captchaToken
+  ) => {
+    if (
+      !captchaToken ||
+      typeof captchaToken !==
+        'string'
+    ) {
       return {
-        success: false,
-        error: `http-${captchaVerify.status}`
+        success:
+          false,
+
+        error:
+          'missing-input-response'
       };
     }
 
-    const captchaResult = await captchaVerify.json();
-
-    return {
-      success: captchaResult.success === true,
-      errorCodes: captchaResult['error-codes'] || []
-    };
-  } catch (error) {
-    console.error(
-      'No fue posible comunicarse con el servicio reCAPTCHA:',
-      error.message
-    );
-
-    return {
-      success: false,
-      error: 'service-unavailable'
-    };
-  }
-};
-
-/**
- * Registro público.
- *
- * Regla de seguridad:
- * Todo registro público crea exclusivamente usuarios Profesor.
- *
- * Nunca se acepta el rol enviado por el cliente.
- */
-const register = async (req, res) => {
-  let connection;
-
-  try {
-    connection = await pool.getConnection();
-
-    const {
-      nombre_completo,
-      email,
-      password,
-      cedula,
-      captchaToken
-    } = req.body;
+    const secretKey =
+      process.env
+        .RECAPTCHA_SECRET_KEY;
 
     if (
-      typeof nombre_completo !== 'string' ||
-      !nombre_completo.trim() ||
-      typeof email !== 'string' ||
-      !email.trim() ||
-      typeof password !== 'string' ||
-      !password
+      typeof secretKey !==
+        'string' ||
+      !secretKey.trim()
     ) {
-      return res.status(400).json({
-        error: 'Todos los campos obligatorios deben estar completos.'
-      });
-    }
-
-    if (!captchaToken) {
-      return res.status(400).json({
-        error: 'Por favor, completa el reCAPTCHA de seguridad.'
-      });
-    }
-
-    const cleanedNombre = nombre_completo.trim();
-    const cleanedEmail = email.trim().toLowerCase();
-
-    const captchaResult = await verificarRecaptcha(captchaToken);
-
-    if (!captchaResult.success) {
-      console.warn(
-        'Registro rechazado por validación reCAPTCHA.',
-        captchaResult.errorCodes || captchaResult.error || 'unknown'
+      console.error(
+        'RECAPTCHA_SECRET_KEY no está configurado en las variables de entorno.'
       );
 
-      return res.status(400).json({
-        error: 'La validación del reCAPTCHA ha fallado o expiró.'
-      });
+      return {
+        success:
+          false,
+
+        error:
+          'missing-input-secret'
+      };
     }
 
-    const [existingUser] = await connection.query(
-      'SELECT id FROM usuarios WHERE email = ? LIMIT 1',
-      [cleanedEmail]
-    );
+    const controller =
+      new AbortController();
 
-    if (existingUser.length > 0) {
-      return res.status(409).json({
-        error: 'El correo electrónico ya está registrado.'
-      });
+    const timeout =
+      setTimeout(
+        () => {
+          controller.abort();
+        },
+        8000
+      );
+
+    try {
+      const body =
+        new URLSearchParams({
+          secret:
+            secretKey,
+
+          response:
+            captchaToken
+        });
+
+      const captchaVerify =
+        await fetch(
+          RECAPTCHA_VERIFY_URL,
+          {
+            method:
+              'POST',
+
+            headers: {
+              'Content-Type':
+                'application/x-www-form-urlencoded'
+            },
+
+            body:
+              body.toString(),
+
+            signal:
+              controller.signal
+          }
+        );
+
+      if (
+        !captchaVerify.ok
+      ) {
+        console.error(
+          `reCAPTCHA respondió con HTTP ${captchaVerify.status}.`
+        );
+
+        return {
+          success:
+            false,
+
+          error:
+            `http-${captchaVerify.status}`
+        };
+      }
+
+      const captchaResult =
+        await captchaVerify.json();
+
+      return {
+        success:
+          captchaResult.success ===
+          true,
+
+        errorCodes:
+          Array.isArray(
+            captchaResult[
+              'error-codes'
+            ]
+          )
+            ? captchaResult[
+                'error-codes'
+              ]
+            : []
+      };
+    } catch (error) {
+      if (
+        error?.name ===
+        'AbortError'
+      ) {
+        console.error(
+          'La validación reCAPTCHA excedió el tiempo máximo de espera.'
+        );
+
+        return {
+          success:
+            false,
+
+          error:
+            'timeout'
+        };
+      }
+
+      console.error(
+        'No fue posible comunicarse con el servicio reCAPTCHA:',
+        error.message
+      );
+
+      return {
+        success:
+          false,
+
+        error:
+          'service-unavailable'
+      };
+    } finally {
+      clearTimeout(
+        timeout
+      );
     }
+  };
 
-    const passwordHash = await bcrypt.hash(password, 10);
+// ============================================================
+// GENERAR CÉDULA TEMPORAL
+// ============================================================
 
-    /*
-     * El registro público NO recibe rol.
-     *
-     * Aunque alguien envíe:
-     *
-     * {
-     *   "rol": "Admin"
-     * }
-     *
-     * ese valor es ignorado deliberadamente.
-     */
-    const rolFinal = 'Profesor';
+const generarCedulaTemporal = () => {
+  const sufijo =
+    crypto
+      .randomBytes(
+        5
+      )
+      .toString(
+        'hex'
+      )
+      .toUpperCase();
 
-    /*
-     * Si no llega una cédula, conservamos el comportamiento actual
-     * generando un identificador temporal.
-     */
-    const cedulaFinal =
-      typeof cedula === 'string' && cedula.trim()
-        ? cedula.trim()
-        : `CC-${Date.now().toString().slice(-8)}`;
+  return `CC-${sufijo}`.slice(
+    0,
+    MAX_CEDULA_LENGTH
+  );
+};
 
-    await connection.beginTransaction();
+// ============================================================
+// REGISTRO PÚBLICO
+// ============================================================
 
-    const [userResult] = await connection.query(
-      `
-        INSERT INTO usuarios
-        (
-          cedula,
-          nombre_completo,
-          email,
-          password,
-          rol
-        )
-        VALUES (?, ?, ?, ?, ?)
-      `,
-      [
-        cedulaFinal,
-        cleanedNombre,
-        cleanedEmail,
-        passwordHash,
-        rolFinal
-      ]
-    );
+const register =
+  async (
+    req,
+    res
+  ) => {
+    let connection;
 
-    const nuevoUsuarioId = userResult.insertId;
+    try {
+      connection =
+        await pool.getConnection();
 
-    /*
-     * La tabla login actualmente duplica la contraseña.
-     * No la eliminamos todavía porque eso pertenece a la futura
-     * refactorización de autenticación.
-     */
-    await connection.query(
-      `
-        INSERT INTO login
-        (
-          usuario_id,
-          email,
+      const {
+        nombre_completo,
+        email,
+        password,
+        cedula,
+        captchaToken
+      } =
+        req.body || {};
+
+      if (
+        typeof nombre_completo !==
+          'string' ||
+        !nombre_completo.trim()
+      ) {
+        return res.status(400).json({
+          error:
+            'El nombre completo es obligatorio.'
+        });
+      }
+
+      if (
+        typeof email !==
+          'string' ||
+        !email.trim()
+      ) {
+        return res.status(400).json({
+          error:
+            'El correo electrónico es obligatorio.'
+        });
+      }
+
+      if (
+        !validarPassword(
           password
         )
-        VALUES (?, ?, ?)
-      `,
-      [
-        nuevoUsuarioId,
-        cleanedEmail,
-        passwordHash
-      ]
-    );
-
-    await connection.commit();
-
-    return res.status(201).json({
-      message: 'Cuenta creada exitosamente. Ya puedes iniciar sesión.',
-      user: {
-        id: nuevoUsuarioId,
-        nombre_completo: cleanedNombre,
-        email: cleanedEmail,
-        rol: rolFinal
+      ) {
+        return res.status(400).json({
+          error:
+            `La contraseña debe tener entre ${MIN_PASSWORD_LENGTH} y ${MAX_PASSWORD_LENGTH} caracteres.`
+        });
       }
-    });
-  } catch (error) {
-    if (connection) {
-      try {
+
+      if (
+        !captchaToken ||
+        typeof captchaToken !==
+          'string'
+      ) {
+        return res.status(400).json({
+          error:
+            'Por favor, completa el reCAPTCHA de seguridad.'
+        });
+      }
+
+      const cleanedNombre =
+        nombre_completo.trim();
+
+      if (
+        cleanedNombre.length >
+        MAX_NAME_LENGTH
+      ) {
+        return res.status(400).json({
+          error:
+            'El nombre completo no puede superar los 150 caracteres.'
+        });
+      }
+
+      const cleanedEmail =
+        normalizarEmail(
+          email
+        );
+
+      if (
+        !cleanedEmail
+      ) {
+        return res.status(400).json({
+          error:
+            'El correo electrónico no es válido.'
+        });
+      }
+
+      if (
+        cleanedEmail ===
+        ADMIN_EMAIL
+      ) {
+        return res.status(403).json({
+          error:
+            'Este correo está reservado para la administración de ArchiveX.'
+        });
+      }
+
+      let cedulaFinal =
+        null;
+
+      if (
+        cedula !==
+          undefined &&
+        cedula !==
+          null &&
+        String(
+          cedula
+        ).trim()
+      ) {
+        if (
+          typeof cedula !==
+          'string'
+        ) {
+          return res.status(400).json({
+            error:
+              'La cédula no es válida.'
+          });
+        }
+
+        cedulaFinal =
+          cedula.trim();
+
+        if (
+          cedulaFinal.length >
+          MAX_CEDULA_LENGTH
+        ) {
+          return res.status(400).json({
+            error:
+              'La cédula no puede superar los 20 caracteres.'
+          });
+        }
+      } else {
+        cedulaFinal =
+          generarCedulaTemporal();
+      }
+
+      const captchaResult =
+        await verificarRecaptcha(
+          captchaToken
+        );
+
+      if (
+        !captchaResult.success
+      ) {
+        console.warn(
+          'Registro rechazado por validación reCAPTCHA.',
+          captchaResult.errorCodes ||
+            captchaResult.error ||
+            'unknown'
+        );
+
+        return res.status(400).json({
+          error:
+            'La validación del reCAPTCHA ha fallado o expiró.'
+        });
+      }
+
+      await connection.beginTransaction();
+
+      const [
+        existingUser
+      ] =
+        await connection.query(
+          `
+            SELECT id
+            FROM usuarios
+            WHERE email = ?
+            LIMIT 1
+          `,
+          [
+            cleanedEmail
+          ]
+        );
+
+      if (
+        existingUser.length >
+        0
+      ) {
         await connection.rollback();
-      } catch (rollbackError) {
+
+        return res.status(409).json({
+          error:
+            'El correo electrónico ya está registrado.'
+        });
+      }
+
+      const [
+        existingCedula
+      ] =
+        await connection.query(
+          `
+            SELECT id
+            FROM usuarios
+            WHERE cedula = ?
+            LIMIT 1
+          `,
+          [
+            cedulaFinal
+          ]
+        );
+
+      if (
+        existingCedula.length >
+        0
+      ) {
+        await connection.rollback();
+
+        return res.status(409).json({
+          error:
+            'La cédula ya está registrada.'
+        });
+      }
+
+      const passwordHash =
+        await bcrypt.hash(
+          password,
+          10
+        );
+
+      const rolFinal =
+        'Profesor';
+
+      const [
+        userResult
+      ] =
+        await connection.query(
+          `
+            INSERT INTO usuarios
+            (
+              cedula,
+              nombre_completo,
+              email,
+              password,
+              rol,
+              correo_verificado
+            )
+            VALUES (?, ?, ?, ?, ?, FALSE)
+          `,
+          [
+            cedulaFinal,
+            cleanedNombre,
+            cleanedEmail,
+            passwordHash,
+            rolFinal
+          ]
+        );
+
+      const nuevoUsuarioId =
+        userResult.insertId;
+
+      await connection.query(
+        `
+          INSERT INTO login
+          (
+            usuario_id,
+            email,
+            password
+          )
+          VALUES (?, ?, ?)
+        `,
+        [
+          nuevoUsuarioId,
+          cleanedEmail,
+          passwordHash
+        ]
+      );
+
+      await connection.commit();
+
+      return res.status(201).json({
+        message:
+          'Cuenta creada exitosamente. Revisa tu correo para completar la activación.',
+
+        user: {
+          id:
+            nuevoUsuarioId,
+
+          nombre_completo:
+            cleanedNombre,
+
+          email:
+            cleanedEmail,
+
+          rol:
+            rolFinal
+        }
+      });
+    } catch (error) {
+      if (
+        connection
+      ) {
+        try {
+          await connection.rollback();
+        } catch (
+          rollbackError
+        ) {
+          console.error(
+            'Error realizando rollback del registro:',
+            rollbackError.message
+          );
+        }
+      }
+
+      console.error(
+        'Error al registrar usuario:',
+        error
+      );
+
+      if (
+        error?.code ===
+          'ER_DUP_ENTRY' ||
+        error?.errno ===
+          1062
+      ) {
+        return res.status(409).json({
+          error:
+            'El correo o la cédula ya están registrados.'
+        });
+      }
+
+      return res.status(500).json({
+        error:
+          'No fue posible completar el registro en este momento.'
+      });
+    } finally {
+      if (
+        connection
+      ) {
+        connection.release();
+      }
+    }
+  };
+
+// ============================================================
+// LOGIN
+// ============================================================
+
+const login =
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const {
+        email,
+        password,
+        captchaToken
+      } =
+        req.body || {};
+
+      if (
+        typeof email !==
+          'string' ||
+        !email.trim()
+      ) {
+        return res.status(400).json({
+          error:
+            'El correo electrónico es obligatorio.'
+        });
+      }
+
+      if (
+        typeof password !==
+          'string' ||
+        !password
+      ) {
+        return res.status(400).json({
+          error:
+            'La contraseña es obligatoria.'
+        });
+      }
+
+      if (
+        !captchaToken ||
+        typeof captchaToken !==
+          'string'
+      ) {
+        return res.status(400).json({
+          error:
+            'Por favor, completa el reCAPTCHA de seguridad.'
+        });
+      }
+
+      const cleanedEmail =
+        normalizarEmail(
+          email
+        );
+
+      if (
+        !cleanedEmail
+      ) {
+        return res.status(400).json({
+          error:
+            'El correo electrónico no es válido.'
+        });
+      }
+
+      const captchaResult =
+        await verificarRecaptcha(
+          captchaToken
+        );
+
+      if (
+        !captchaResult.success
+      ) {
+        console.warn(
+          'Inicio de sesión rechazado por validación reCAPTCHA.',
+          captchaResult.errorCodes ||
+            captchaResult.error ||
+            'unknown'
+        );
+
+        return res.status(400).json({
+          error:
+            'La validación del reCAPTCHA ha fallado o expiró.'
+        });
+      }
+
+      const jwtSecret =
+        obtenerJwtSecret();
+
+      const [
+        loginRows
+      ] =
+        await pool.query(
+          `
+            SELECT
+              id,
+              usuario_id,
+              email,
+              password
+            FROM login
+            WHERE email = ?
+            LIMIT 1
+          `,
+          [
+            cleanedEmail
+          ]
+        );
+
+      const loginData =
+        loginRows[0];
+
+      if (
+        !loginData
+      ) {
+        return res.status(401).json({
+          error:
+            'Credenciales incorrectas.'
+        });
+      }
+
+      const passwordMatch =
+        await bcrypt.compare(
+          password,
+          loginData.password
+        );
+
+      if (
+        !passwordMatch
+      ) {
+        return res.status(401).json({
+          error:
+            'Credenciales incorrectas.'
+        });
+      }
+
+      const [
+        userRows
+      ] =
+        await pool.query(
+          `
+            SELECT
+              id,
+              nombre_completo,
+              email,
+              rol,
+              correo_verificado
+            FROM usuarios
+            WHERE id = ?
+            LIMIT 1
+          `,
+          [
+            loginData.usuario_id
+          ]
+        );
+
+      const user =
+        userRows[0];
+
+      if (
+        !user
+      ) {
+        return res.status(401).json({
+          error:
+            'Credenciales incorrectas.'
+        });
+      }
+
+      const emailUsuario =
+        normalizarEmail(
+          user.email
+        );
+
+      const rolUsuario =
+        String(
+          user.rol || ''
+        ).trim();
+
+      if (
+        !emailUsuario ||
+        !rolUsuario
+      ) {
         console.error(
-          'Error realizando rollback del registro:',
-          rollbackError.message
+          `Usuario ${user.id} no tiene email o rol válidos configurados.`
+        );
+
+        return res.status(401).json({
+          error:
+            'Credenciales incorrectas.'
+        });
+      }
+
+      const rolNormalizado =
+        rolUsuario
+          .toLowerCase();
+
+      const esRolAdmin =
+        rolNormalizado ===
+          'admin' ||
+        rolNormalizado ===
+          'administrador';
+
+      const esCorreoAdmin =
+        emailUsuario ===
+        ADMIN_EMAIL;
+
+      if (
+        esRolAdmin &&
+        !esCorreoAdmin
+      ) {
+        console.error(
+          `Cuenta ${user.id} tiene rol administrativo con un correo no autorizado.`
+        );
+
+        return res.status(403).json({
+          error:
+            'La cuenta administrativa no está autorizada.'
+        });
+      }
+
+      if (
+        esCorreoAdmin &&
+        !esRolAdmin
+      ) {
+        console.error(
+          'El correo administrativo está asociado a un rol distinto de Admin.'
+        );
+
+        return res.status(403).json({
+          error:
+            'La cuenta administrativa está configurada incorrectamente.'
+        });
+      }
+
+      // ------------------------------------------------------
+      // GENERAR JWT
+      // ------------------------------------------------------
+
+      const token =
+        jwt.sign(
+          {
+            id:
+              user.id,
+
+            email:
+              emailUsuario,
+
+            rol:
+              rolUsuario
+          },
+
+          jwtSecret,
+
+          {
+            expiresIn:
+              JWT_EXPIRATION,
+
+            algorithm:
+              JWT_ALGORITHM
+          }
+        );
+
+      return res.status(200).json({
+        message:
+          'Ingreso exitoso',
+
+        token,
+
+        user: {
+          id:
+            user.id,
+
+          nombre_completo:
+            user.nombre_completo,
+
+          email:
+            emailUsuario,
+
+          rol:
+            rolUsuario,
+
+          correo_verificado:
+            Boolean(
+              user.correo_verificado
+            )
+        }
+      });
+    } catch (error) {
+      console.error(
+        'Error durante el inicio de sesión:',
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          'Error interno del servidor en el inicio de sesión.'
+      });
+    }
+  };
+
+// ============================================================
+// SOLICITAR RECUPERACIÓN DE CONTRASEÑA
+// ============================================================
+//
+// Siempre devuelve el mismo mensaje general.
+//
+// Esto evita revelar si un correo concreto está registrado.
+//
+// ============================================================
+
+const forgotPassword =
+  async (
+    req,
+    res
+  ) => {
+    let connection;
+
+    const respuestaGenerica = {
+      message:
+        'Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.'
+    };
+
+    try {
+      const {
+        email
+      } =
+        req.body || {};
+
+      const emailNormalizado =
+        normalizarEmail(
+          email
+        );
+
+      if (
+        !emailNormalizado
+      ) {
+        return res.status(200).json(
+          respuestaGenerica
         );
       }
-    }
 
-    console.error('Error al registrar usuario:', error);
+      connection =
+        await pool.getConnection();
 
-    /*
-     * Nunca enviamos error.sqlMessage ni error.message
-     * al cliente porque podrían revelar estructura interna,
-     * SQL o información sensible.
-     */
-    return res.status(500).json({
-      error: 'No fue posible completar el registro en este momento.'
-    });
-  } finally {
-    if (connection) {
-      connection.release();
-    }
-  }
-};
+      const [
+        usuarios
+      ] =
+        await connection.query(
+          `
+            SELECT
+              id,
+              nombre_completo,
+              email,
+              rol
+            FROM usuarios
+            WHERE email = ?
+            LIMIT 1
+          `,
+          [
+            emailNormalizado
+          ]
+        );
 
-/**
- * Inicio de sesión.
- */
-const login = async (req, res) => {
-  try {
-    const {
-      email,
-      password,
-      captchaToken
-    } = req.body;
+      // ------------------------------------------------------
+      // NO REVELAR EXISTENCIA DE CUENTA
+      // ------------------------------------------------------
 
-    if (
-      typeof email !== 'string' ||
-      !email.trim() ||
-      typeof password !== 'string' ||
-      !password
-    ) {
-      return res.status(400).json({
-        error: 'El correo y la contraseña son obligatorios.'
-      });
-    }
+      if (
+        usuarios.length ===
+        0
+      ) {
+        return res.status(200).json(
+          respuestaGenerica
+        );
+      }
 
-    if (!captchaToken) {
-      return res.status(400).json({
-        error: 'Por favor, completa el reCAPTCHA de seguridad.'
-      });
-    }
+      const usuario =
+        usuarios[0];
 
-    const cleanedEmail = email.trim().toLowerCase();
+      // ------------------------------------------------------
+      // GENERAR TOKEN
+      // ------------------------------------------------------
 
-    const captchaResult = await verificarRecaptcha(captchaToken);
+      const token =
+        generarTokenRecuperacion();
 
-    if (!captchaResult.success) {
-      console.warn(
-        'Inicio de sesión rechazado por validación reCAPTCHA.',
-        captchaResult.errorCodes || captchaResult.error || 'unknown'
+      const tokenHash =
+        hashToken(
+          token
+        );
+
+      const expiresAt =
+        new Date(
+          Date.now() +
+            PASSWORD_RESET_EXPIRATION_MINUTES *
+              60 *
+              1000
+        );
+
+      // ------------------------------------------------------
+      // TRANSACCIÓN
+      // ------------------------------------------------------
+
+      await connection.beginTransaction();
+
+      // ------------------------------------------------------
+      // INVALIDAR TOKENS ANTERIORES
+      // ------------------------------------------------------
+
+      await connection.query(
+        `
+          UPDATE password_reset_tokens
+          SET used_at = CURRENT_TIMESTAMP
+          WHERE usuario_id = ?
+            AND used_at IS NULL
+        `,
+        [
+          usuario.id
+        ]
       );
 
-      return res.status(400).json({
-        error: 'La validación del reCAPTCHA ha fallado o expiró.'
-      });
-    }
+      // ------------------------------------------------------
+      // GUARDAR HASH
+      // ------------------------------------------------------
 
-    /*
-     * El JWT_SECRET se obtiene en el momento en que realmente
-     * necesitamos firmar el token.
-     */
-    const jwtSecret = obtenerJwtSecret();
+      await connection.query(
+        `
+          INSERT INTO password_reset_tokens
+          (
+            usuario_id,
+            token_hash,
+            expires_at
+          )
+          VALUES (?, ?, ?)
+        `,
+        [
+          usuario.id,
+          tokenHash,
+          expiresAt
+        ]
+      );
 
-    const [loginRows] = await pool.query(
-      `
-        SELECT
-          id,
-          usuario_id,
-          email,
-          password
-        FROM login
-        WHERE email = ?
-        LIMIT 1
-      `,
-      [cleanedEmail]
-    );
+      await connection.commit();
 
-    const loginData = loginRows[0];
+      // ------------------------------------------------------
+      // ENVIAR CORREO
+      // ------------------------------------------------------
 
-    if (!loginData) {
-      return res.status(401).json({
-        error: 'Credenciales incorrectas.'
-      });
-    }
+      try {
+        await enviarCorreoRecuperacion({
+          email:
+            emailNormalizado,
 
-    const isMatch = await bcrypt.compare(
-      password,
-      loginData.password
-    );
+          nombre:
+            usuario.nombre_completo,
 
-    if (!isMatch) {
-      return res.status(401).json({
-        error: 'Credenciales incorrectas.'
-      });
-    }
+          token
+        });
+      } catch (
+        emailError
+      ) {
+        console.error(
+          'No fue posible enviar el correo de recuperación:',
+          emailError
+        );
 
-    const [userRows] = await pool.query(
-      `
-        SELECT
-          id,
-          nombre_completo,
-          email,
-          rol
-        FROM usuarios
-        WHERE id = ?
-        LIMIT 1
-      `,
-      [loginData.usuario_id]
-    );
+        // --------------------------------------------------
+        // INVALIDAR TOKEN SI FALLÓ EL CORREO
+        // --------------------------------------------------
 
-    const user = userRows[0];
-
-    if (!user) {
-      return res.status(401).json({
-        error: 'Credenciales incorrectas.'
-      });
-    }
-
-    /*
-     * El rol utilizado para el JWT proviene de la base de datos,
-     * nunca del frontend.
-     */
-    const token = jwt.sign(
-      {
-        id: user.id,
-        email: user.email,
-        rol: user.rol
-      },
-      jwtSecret,
-      {
-        expiresIn: '24h',
-        algorithm: 'HS256'
+        await pool.query(
+          `
+            UPDATE password_reset_tokens
+            SET used_at = CURRENT_TIMESTAMP
+            WHERE token_hash = ?
+              AND used_at IS NULL
+          `,
+          [
+            tokenHash
+          ]
+        );
       }
-    );
 
-    return res.status(200).json({
-      message: 'Ingreso exitoso',
-      token,
-      user
-    });
-  } catch (error) {
-    console.error('Error durante el inicio de sesión:', error);
+      return res.status(200).json(
+        respuestaGenerica
+      );
+    } catch (error) {
+      if (
+        connection
+      ) {
+        try {
+          await connection.rollback();
+        } catch (
+          rollbackError
+        ) {
+          console.error(
+            'Error realizando rollback de recuperación:',
+            rollbackError.message
+          );
+        }
+      }
 
-    return res.status(500).json({
-      error: 'Error interno del servidor en el inicio de sesión.'
-    });
-  }
-};
+      console.error(
+        'Error solicitando recuperación de contraseña:',
+        error
+      );
+
+      return res.status(200).json(
+        respuestaGenerica
+      );
+    } finally {
+      if (
+        connection
+      ) {
+        connection.release();
+      }
+    }
+  };
+
+// ============================================================
+// RESTABLECER CONTRASEÑA
+// ============================================================
+
+const resetPassword =
+  async (
+    req,
+    res
+  ) => {
+    let connection;
+
+    try {
+      const {
+        token,
+        password
+      } =
+        req.body || {};
+
+      if (
+        typeof token !==
+          'string' ||
+        !token.trim()
+      ) {
+        return res.status(400).json({
+          error:
+            'El token de recuperación es obligatorio.'
+        });
+      }
+
+      if (
+        !validarPassword(
+          password
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            `La nueva contraseña debe tener entre ${MIN_PASSWORD_LENGTH} y ${MAX_PASSWORD_LENGTH} caracteres.`
+        });
+      }
+
+      const tokenNormalizado =
+        token.trim();
+
+      const tokenHash =
+        hashToken(
+          tokenNormalizado
+        );
+
+      connection =
+        await pool.getConnection();
+
+      await connection.beginTransaction();
+
+      // ------------------------------------------------------
+      // BUSCAR TOKEN
+      // ------------------------------------------------------
+
+      const [
+        tokenRows
+      ] =
+        await connection.query(
+          `
+            SELECT
+              id,
+              usuario_id,
+              expires_at,
+              used_at
+            FROM password_reset_tokens
+            WHERE token_hash = ?
+            LIMIT 1
+          `,
+          [
+            tokenHash
+          ]
+        );
+
+      const resetToken =
+        tokenRows[0];
+
+      if (
+        !resetToken
+      ) {
+        await connection.rollback();
+
+        return res.status(400).json({
+          error:
+            'El enlace de recuperación no es válido o ha expirado.'
+        });
+      }
+
+      if (
+        resetToken.used_at
+      ) {
+        await connection.rollback();
+
+        return res.status(400).json({
+          error:
+            'El enlace de recuperación ya fue utilizado.'
+        });
+      }
+
+      const expiresAt =
+        new Date(
+          resetToken.expires_at
+        );
+
+      if (
+        Number.isNaN(
+          expiresAt.getTime()
+        ) ||
+        expiresAt.getTime() <=
+          Date.now()
+      ) {
+        await connection.rollback();
+
+        return res.status(400).json({
+          error:
+            'El enlace de recuperación no es válido o ha expirado.'
+        });
+      }
+
+      // ------------------------------------------------------
+      // BUSCAR USUARIO
+      // ------------------------------------------------------
+
+      const [
+        userRows
+      ] =
+        await connection.query(
+          `
+            SELECT
+              id,
+              email,
+              rol
+            FROM usuarios
+            WHERE id = ?
+            LIMIT 1
+          `,
+          [
+            resetToken.usuario_id
+          ]
+        );
+
+      const usuario =
+        userRows[0];
+
+      if (
+        !usuario
+      ) {
+        await connection.rollback();
+
+        return res.status(400).json({
+          error:
+            'El enlace de recuperación no es válido.'
+        });
+      }
+
+      // ------------------------------------------------------
+      // HASH NUEVA CONTRASEÑA
+      // ------------------------------------------------------
+
+      const passwordHash =
+        await bcrypt.hash(
+          password,
+          12
+        );
+
+      // ------------------------------------------------------
+      // ACTUALIZAR USUARIO
+      // ------------------------------------------------------
+
+      await connection.query(
+        `
+          UPDATE usuarios
+          SET
+            password = ?
+          WHERE id = ?
+        `,
+        [
+          passwordHash,
+          usuario.id
+        ]
+      );
+
+      // ------------------------------------------------------
+      // ACTUALIZAR LOGIN
+      // ------------------------------------------------------
+
+      await connection.query(
+        `
+          UPDATE login
+          SET
+            password = ?,
+            email = ?
+          WHERE usuario_id = ?
+        `,
+        [
+          passwordHash,
+          usuario.email,
+          usuario.id
+        ]
+      );
+
+      // ------------------------------------------------------
+      // INVALIDAR TOKEN
+      // ------------------------------------------------------
+
+      await connection.query(
+        `
+          UPDATE password_reset_tokens
+          SET
+            used_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `,
+        [
+          resetToken.id
+        ]
+      );
+
+      // ------------------------------------------------------
+      // INVALIDAR TODOS LOS DEMÁS TOKENS DEL USUARIO
+      // ------------------------------------------------------
+
+      await connection.query(
+        `
+          UPDATE password_reset_tokens
+          SET
+            used_at = CURRENT_TIMESTAMP
+          WHERE usuario_id = ?
+            AND used_at IS NULL
+        `,
+        [
+          usuario.id
+        ]
+      );
+
+      await connection.commit();
+
+      return res.status(200).json({
+        message:
+          'Contraseña actualizada correctamente. Ya puedes iniciar sesión.'
+      });
+    } catch (error) {
+      if (
+        connection
+      ) {
+        try {
+          await connection.rollback();
+        } catch (
+          rollbackError
+        ) {
+          console.error(
+            'Error realizando rollback del restablecimiento:',
+            rollbackError.message
+          );
+        }
+      }
+
+      console.error(
+        'Error restableciendo contraseña:',
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          'No fue posible restablecer la contraseña en este momento.'
+      });
+    } finally {
+      if (
+        connection
+      ) {
+        connection.release();
+      }
+    }
+  };
 
 module.exports = {
   register,
-  login
+  login,
+  forgotPassword,
+  resetPassword
 };

@@ -1,4 +1,11 @@
+const fs = require('fs');
+const path = require('path');
+
 const Asignacion = require('../models/asignacionModel');
+
+const {
+  PRIVATE_DIR
+} = require('../config/uploadPaths');
 
 // ============================================================
 // UTILIDADES
@@ -34,19 +41,77 @@ const obtenerUsuarioAutenticadoId = (req) => {
   );
 };
 
+const obtenerIdNumerico = (valor) => {
+  const id = Number.parseInt(valor, 10);
+
+  if (!Number.isInteger(id) || id <= 0) {
+    return null;
+  }
+
+  return id;
+};
+
+const eliminarArchivoPrivadoSeguro = async (rutaArchivo) => {
+  if (!rutaArchivo) {
+    return;
+  }
+
+  try {
+    const nombreArchivo = path.basename(
+      String(rutaArchivo)
+    );
+
+    if (
+      !nombreArchivo ||
+      nombreArchivo !== String(rutaArchivo)
+        .replace(/\\/g, '/')
+        .split('/')
+        .pop()
+    ) {
+      return;
+    }
+
+    const rutaFinal = path.resolve(
+      PRIVATE_DIR,
+      nombreArchivo
+    );
+
+    const directorioPrivado =
+      path.resolve(PRIVATE_DIR);
+
+    if (
+      rutaFinal !== directorioPrivado &&
+      !rutaFinal.startsWith(
+        `${directorioPrivado}${path.sep}`
+      )
+    ) {
+      return;
+    }
+
+    await fs.promises.unlink(rutaFinal);
+  } catch (error) {
+    // ENOENT significa que el archivo ya no existe.
+    if (error.code !== 'ENOENT') {
+      console.error(
+        'No fue posible eliminar el archivo privado:',
+        error
+      );
+    }
+  }
+};
+
 // ============================================================
 // 1. GET GENERAL
 // ============================================================
-//
-// Esta ruta está protegida desde asignacionRoutes.js.
 //
 // Admin:
 //   puede consultar todas.
 //
 // Evaluador:
-//   la ruta existe por compatibilidad, pero el acceso a los
-//   datos debe mantenerse restringido por el diseño del sistema.
+//   solamente consulta sus propias asignaciones.
 //
+// La ruta ya está protegida mediante requireRole(), pero se
+// mantiene lógica adicional aquí como defensa en profundidad.
 // ============================================================
 
 const getAsignaciones = async (req, res) => {
@@ -54,10 +119,21 @@ const getAsignaciones = async (req, res) => {
     const esAdmin = esAdminUser(req);
 
     if (!esAdmin) {
-      const usuarioId = obtenerUsuarioAutenticadoId(req);
+      const usuarioId =
+        obtenerUsuarioAutenticadoId(req);
+
+      if (!usuarioId) {
+        return res.status(401).json({
+          status: 'error',
+          message:
+            'No se pudo identificar al usuario autenticado.'
+        });
+      }
 
       const asignaciones =
-        await Asignacion.getByEvaluadorId(usuarioId);
+        await Asignacion.getByEvaluadorId(
+          usuarioId
+        );
 
       return res.status(200).json({
         status: 'success',
@@ -65,18 +141,23 @@ const getAsignaciones = async (req, res) => {
       });
     }
 
-    const asignaciones = await Asignacion.getAll();
+    const asignaciones =
+      await Asignacion.getAll();
 
     return res.status(200).json({
       status: 'success',
       data: asignaciones
     });
   } catch (error) {
-    console.error('Error en getAsignaciones:', error);
+    console.error(
+      'Error en getAsignaciones:',
+      error
+    );
 
     return res.status(500).json({
       status: 'error',
-      message: 'Error al obtener las asignaciones.'
+      message:
+        'Error al obtener las asignaciones.'
     });
   }
 };
@@ -89,29 +170,48 @@ const getAsignaciones = async (req, res) => {
 //   puede consultar cualquier asignación.
 //
 // Evaluador:
-//   solamente puede consultar una asignación cuyo evaluador_id
-//   coincida con su identidad autenticada.
-//
-// IMPORTANTE:
-//   No confiamos en un evaluadorId enviado por el frontend.
+//   solamente puede consultar una asignación cuyo
+//   evaluador_id coincida con su identidad autenticada.
 // ============================================================
 
 const getAsignacionById = async (req, res) => {
   try {
+    const id = obtenerIdNumerico(
+      req.params.id
+    );
+
+    if (!id) {
+      return res.status(400).json({
+        status: 'error',
+        message:
+          'El identificador de la asignación no es válido.'
+      });
+    }
+
     const asignacion =
-      await Asignacion.getById(req.params.id);
+      await Asignacion.getById(id);
 
     if (!asignacion) {
       return res.status(404).json({
         status: 'fail',
-        message: 'Asignación no encontrada'
+        message:
+          'Asignación no encontrada.'
       });
     }
 
     const esAdmin = esAdminUser(req);
 
     if (!esAdmin) {
-      const usuarioId = obtenerUsuarioAutenticadoId(req);
+      const usuarioId =
+        obtenerUsuarioAutenticadoId(req);
+
+      if (!usuarioId) {
+        return res.status(401).json({
+          status: 'error',
+          message:
+            'No se pudo identificar al usuario autenticado.'
+        });
+      }
 
       if (
         String(asignacion.evaluador_id) !==
@@ -130,11 +230,15 @@ const getAsignacionById = async (req, res) => {
       data: asignacion
     });
   } catch (error) {
-    console.error('Error en getAsignacionById:', error);
+    console.error(
+      'Error en getAsignacionById:',
+      error
+    );
 
     return res.status(500).json({
       status: 'error',
-      message: 'Error al obtener la asignación.'
+      message:
+        'Error al obtener la asignación.'
     });
   }
 };
@@ -150,17 +254,42 @@ const getAsignacionById = async (req, res) => {
 //   solamente puede consultar sus propias asignaciones.
 //
 // Aunque el cliente mande:
-//   /evaluador/999
+//
+// /evaluador/999
 //
 // el backend compara ese ID contra req.user.id.
 // ============================================================
 
-const getAsignacionesByEvaluador = async (req, res) => {
+const getAsignacionesByEvaluador = async (
+  req,
+  res
+) => {
   try {
-    const { evaluadorId } = req.params;
+    const evaluadorId =
+      obtenerIdNumerico(
+        req.params.evaluadorId
+      );
+
+    if (!evaluadorId) {
+      return res.status(400).json({
+        status: 'error',
+        message:
+          'El identificador del evaluador no es válido.'
+      });
+    }
 
     const esAdmin = esAdminUser(req);
-    const usuarioId = obtenerUsuarioAutenticadoId(req);
+
+    const usuarioId =
+      obtenerUsuarioAutenticadoId(req);
+
+    if (!usuarioId) {
+      return res.status(401).json({
+        status: 'error',
+        message:
+          'No se pudo identificar al usuario autenticado.'
+      });
+    }
 
     if (
       !esAdmin &&
@@ -174,7 +303,9 @@ const getAsignacionesByEvaluador = async (req, res) => {
     }
 
     const asignaciones =
-      await Asignacion.getByEvaluadorId(evaluadorId);
+      await Asignacion.getByEvaluadorId(
+        evaluadorId
+      );
 
     return res.status(200).json({
       status: 'success',
@@ -198,27 +329,64 @@ const getAsignacionesByEvaluador = async (req, res) => {
 // 4. CREAR ASIGNACIÓN
 // ============================================================
 //
-// Esta operación ya está restringida a Admin desde
-// asignacionRoutes.js.
+// Esta operación está restringida a Admin desde las rutas.
 //
-// Por eso el Admin puede enviar el evaluador_id que corresponda
-// según el flujo administrativo.
+// Se mantiene una comprobación adicional por defensa en
+// profundidad.
 // ============================================================
 
-const asignarEvaluador = async (req, res) => {
+const asignarEvaluador = async (
+  req,
+  res
+) => {
   try {
-    const id = await Asignacion.create(req.body);
+    if (!esAdminUser(req)) {
+      return res.status(403).json({
+        status: 'error',
+        message:
+          'No tienes permisos para asignar evaluadores.'
+      });
+    }
+
+    if (
+      !req.body ||
+      typeof req.body !== 'object'
+    ) {
+      return res.status(400).json({
+        status: 'error',
+        message:
+          'Los datos de la asignación no son válidos.'
+      });
+    }
+
+    if (
+      Array.isArray(req.body) ||
+      Object.keys(req.body).length === 0
+    ) {
+      return res.status(400).json({
+        status: 'error',
+        message:
+          'Debes proporcionar los datos de la asignación.'
+      });
+    }
+
+    const id =
+      await Asignacion.create(req.body);
 
     return res.status(201).json({
       status: 'success',
       id
     });
   } catch (error) {
-    console.error('Error en asignarEvaluador:', error);
+    console.error(
+      'Error en asignarEvaluador:',
+      error
+    );
 
     return res.status(500).json({
       status: 'error',
-      message: 'Error al asignar el evaluador.'
+      message:
+        'Error al asignar el evaluador.'
     });
   }
 };
@@ -234,18 +402,33 @@ const asignarEvaluador = async (req, res) => {
 //   solamente puede calificar la asignación que realmente
 //   está asociada a su usuario autenticado.
 //
-// El archivo se genera con nombre seguro por Multer.
+// El archivo se almacena en PRIVATE_DIR.
 //
-// IMPORTANTE:
-// uploadMiddleware.js ya utiliza PRIVATE_DIR.
-// Por eso la URL almacenada debe ser:
-//
-// uploads_private/<archivo>
-//
+// Si la actualización de BD falla después de guardar un archivo
+// nuevo, se intenta eliminar el archivo para evitar residuos
+// privados huérfanos.
 // ============================================================
 
-const calificar = async (req, res) => {
-  const { id } = req.params;
+const calificar = async (
+  req,
+  res
+) => {
+  const id =
+    obtenerIdNumerico(req.params.id);
+
+  if (!id) {
+    if (req.file) {
+      await eliminarArchivoPrivadoSeguro(
+        req.file.filename
+      );
+    }
+
+    return res.status(400).json({
+      status: 'error',
+      message:
+        'El identificador de la asignación no es válido.'
+    });
+  }
 
   const {
     puntaje,
@@ -257,9 +440,16 @@ const calificar = async (req, res) => {
       await Asignacion.getById(id);
 
     if (!asignacionExistente) {
+      if (req.file) {
+        await eliminarArchivoPrivadoSeguro(
+          req.file.filename
+        );
+      }
+
       return res.status(404).json({
         status: 'fail',
-        message: 'Asignación no encontrada'
+        message:
+          'Asignación no encontrada.'
       });
     }
 
@@ -267,16 +457,37 @@ const calificar = async (req, res) => {
     // OWNERSHIP
     // --------------------------------------------------------
 
-    const esAdmin = esAdminUser(req);
+    const esAdmin =
+      esAdminUser(req);
 
     if (!esAdmin) {
       const usuarioId =
         obtenerUsuarioAutenticadoId(req);
 
+      if (!usuarioId) {
+        if (req.file) {
+          await eliminarArchivoPrivadoSeguro(
+            req.file.filename
+          );
+        }
+
+        return res.status(401).json({
+          status: 'error',
+          message:
+            'No se pudo identificar al usuario autenticado.'
+        });
+      }
+
       if (
         String(asignacionExistente.evaluador_id) !==
         String(usuarioId)
       ) {
+        if (req.file) {
+          await eliminarArchivoPrivadoSeguro(
+            req.file.filename
+          );
+        }
+
         return res.status(403).json({
           status: 'error',
           message:
@@ -289,13 +500,13 @@ const calificar = async (req, res) => {
     // ARCHIVO DE EVALUACIÓN
     // --------------------------------------------------------
 
-    const archivo_evaluacion = req.file
-      ? `uploads_private/${req.file.filename}`
-      : null;
+    const archivoNuevo =
+      req.file
+        ? `uploads_private/${req.file.filename}`
+        : null;
 
-    // Si no se sube uno nuevo, conservamos el anterior.
     const rutaArchivoActualizada =
-      archivo_evaluacion ||
+      archivoNuevo ||
       asignacionExistente.archivo_evaluacion ||
       null;
 
@@ -310,15 +521,87 @@ const calificar = async (req, res) => {
       puntaje !== null &&
       String(puntaje).trim() !== ''
     ) {
-      puntajeFinal = Number.parseInt(
-        puntaje,
-        10
-      );
+      puntajeFinal =
+        Number(puntaje);
 
-      if (Number.isNaN(puntajeFinal)) {
+      if (
+        !Number.isFinite(puntajeFinal)
+      ) {
+        if (req.file) {
+          await eliminarArchivoPrivadoSeguro(
+            req.file.filename
+          );
+        }
+
         return res.status(400).json({
           status: 'error',
-          message: 'El puntaje proporcionado no es válido.'
+          message:
+            'El puntaje proporcionado no es válido.'
+        });
+      }
+
+      // El sistema trabaja habitualmente con un porcentaje
+      // de evaluación. Se restringe a un intervalo seguro.
+      if (
+        puntajeFinal < 0 ||
+        puntajeFinal > 100
+      ) {
+        if (req.file) {
+          await eliminarArchivoPrivadoSeguro(
+            req.file.filename
+          );
+        }
+
+        return res.status(400).json({
+          status: 'error',
+          message:
+            'El puntaje debe estar entre 0 y 100.'
+        });
+      }
+    }
+
+    // --------------------------------------------------------
+    // COMENTARIOS
+    // --------------------------------------------------------
+
+    let comentariosFinal = null;
+
+    if (
+      comentarios !== undefined &&
+      comentarios !== null
+    ) {
+      if (
+        typeof comentarios !== 'string'
+      ) {
+        if (req.file) {
+          await eliminarArchivoPrivadoSeguro(
+            req.file.filename
+          );
+        }
+
+        return res.status(400).json({
+          status: 'error',
+          message:
+            'Los comentarios proporcionados no son válidos.'
+        });
+      }
+
+      comentariosFinal =
+        comentarios.trim();
+
+      if (
+        comentariosFinal.length > 5000
+      ) {
+        if (req.file) {
+          await eliminarArchivoPrivadoSeguro(
+            req.file.filename
+          );
+        }
+
+        return res.status(400).json({
+          status: 'error',
+          message:
+            'Los comentarios no pueden superar los 5000 caracteres.'
         });
       }
     }
@@ -328,17 +611,24 @@ const calificar = async (req, res) => {
     // --------------------------------------------------------
 
     const affectedRows =
-      await Asignacion.updateEvaluacion(id, {
-        puntaje: puntajeFinal,
-        comentarios:
-          comentarios !== undefined
-            ? String(comentarios).trim()
-            : null,
-        archivo_evaluacion:
-          rutaArchivoActualizada
-      });
+      await Asignacion.updateEvaluacion(
+        id,
+        {
+          puntaje: puntajeFinal,
+          comentarios:
+            comentariosFinal,
+          archivo_evaluacion:
+            rutaArchivoActualizada
+        }
+      );
 
     if (affectedRows === 0) {
+      if (req.file) {
+        await eliminarArchivoPrivadoSeguro(
+          req.file.filename
+        );
+      }
+
       return res.status(400).json({
         status: 'fail',
         message:
@@ -346,13 +636,48 @@ const calificar = async (req, res) => {
       });
     }
 
+    // --------------------------------------------------------
+    // LIMPIAR ARCHIVO ANTERIOR
+    // --------------------------------------------------------
+    //
+    // Solo se elimina el archivo anterior cuando:
+    //
+    // - existe uno nuevo;
+    // - la actualización en BD tuvo éxito;
+    // - el anterior es diferente al nuevo.
+    //
+    // Esto evita borrar accidentalmente el archivo actualmente
+    // almacenado si no hubo reemplazo.
+    //
+
+    if (
+      archivoNuevo &&
+      asignacionExistente.archivo_evaluacion &&
+      asignacionExistente.archivo_evaluacion !==
+        archivoNuevo
+    ) {
+      await eliminarArchivoPrivadoSeguro(
+        asignacionExistente.archivo_evaluacion
+          .replace(/^uploads_private\//, '')
+      );
+    }
+
     return res.status(200).json({
       status: 'success',
       message:
-        'Evaluación registrada con éxito'
+        'Evaluación registrada con éxito.'
     });
   } catch (error) {
-    console.error('Error en calificar:', error);
+    if (req.file) {
+      await eliminarArchivoPrivadoSeguro(
+        req.file.filename
+      );
+    }
+
+    console.error(
+      'Error en calificar:',
+      error
+    );
 
     return res.status(500).json({
       status: 'error',
@@ -367,29 +692,80 @@ const calificar = async (req, res) => {
 // ============================================================
 //
 // Solo Admin puede eliminar asignaciones.
-// La autorización ya está aplicada en las rutas.
+//
+// La autorización está aplicada en rutas y se vuelve a
+// comprobar aquí como defensa en profundidad.
 // ============================================================
 
-const deleteAsignacion = async (req, res) => {
+const deleteAsignacion = async (
+  req,
+  res
+) => {
   try {
+    if (!esAdminUser(req)) {
+      return res.status(403).json({
+        status: 'error',
+        message:
+          'No tienes permisos para eliminar asignaciones.'
+      });
+    }
+
+    const id =
+      obtenerIdNumerico(req.params.id);
+
+    if (!id) {
+      return res.status(400).json({
+        status: 'error',
+        message:
+          'El identificador de la asignación no es válido.'
+      });
+    }
+
+    const asignacionExistente =
+      await Asignacion.getById(id);
+
+    if (!asignacionExistente) {
+      return res.status(404).json({
+        status: 'fail',
+        message:
+          'Asignación no encontrada para eliminar.'
+      });
+    }
+
     const affectedRows =
-      await Asignacion.delete(req.params.id);
+      await Asignacion.delete(id);
 
     if (affectedRows === 0) {
       return res.status(404).json({
         status: 'fail',
         message:
-          'Asignación no encontrada para eliminar'
+          'Asignación no encontrada para eliminar.'
       });
     }
 
-    return res.json({
+    // --------------------------------------------------------
+    // LIMPIAR ACTA PRIVADA
+    // --------------------------------------------------------
+
+    if (
+      asignacionExistente.archivo_evaluacion
+    ) {
+      await eliminarArchivoPrivadoSeguro(
+        asignacionExistente.archivo_evaluacion
+          .replace(/^uploads_private\//, '')
+      );
+    }
+
+    return res.status(200).json({
       status: 'success',
       message:
-        'Asignación eliminada correctamente'
+        'Asignación eliminada correctamente.'
     });
   } catch (error) {
-    console.error('Error en deleteAsignacion:', error);
+    console.error(
+      'Error en deleteAsignacion:',
+      error
+    );
 
     return res.status(500).json({
       status: 'error',

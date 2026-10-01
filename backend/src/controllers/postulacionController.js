@@ -125,14 +125,74 @@ const createPostulacion = async (req, res) => {
     }
 
     // ========================================================
+    // VALIDACIÓN BÁSICA DE IDENTIFICADORES
+    // ========================================================
+
+    const convocatoriaIdNumerico =
+      Number.parseInt(convocatoriaId, 10);
+
+    const sedeIdNumerico =
+      Number.parseInt(sede, 10);
+
+    if (
+      !Number.isInteger(convocatoriaIdNumerico) ||
+      convocatoriaIdNumerico <= 0
+    ) {
+      return res.status(400).json({
+        status: 'error',
+        message:
+          'La convocatoria proporcionada no es válida.'
+      });
+    }
+
+    if (
+      !Number.isInteger(sedeIdNumerico) ||
+      sedeIdNumerico <= 0
+    ) {
+      return res.status(400).json({
+        status: 'error',
+        message:
+          'La sede proporcionada no es válida.'
+      });
+    }
+
+    // ========================================================
+    // VALIDACIÓN BÁSICA DEL TÍTULO
+    // ========================================================
+
+    if (
+      typeof titulo_propuesta !== 'string' ||
+      titulo_propuesta.trim().length === 0
+    ) {
+      return res.status(400).json({
+        status: 'error',
+        message:
+          'El título de la propuesta no puede estar vacío.'
+      });
+    }
+
+    const tituloFinal =
+      titulo_propuesta.trim();
+
+    if (tituloFinal.length > 500) {
+      return res.status(400).json({
+        status: 'error',
+        message:
+          'El título de la propuesta no puede superar los 500 caracteres.'
+      });
+    }
+
+    // ========================================================
     // CÓDIGO DE PROPUESTA
     // ========================================================
 
     const finalCodigoPropuesta =
-      codigoPropuesta ||
-      `ArchiveX-${Date.now()}-${Math.floor(
-        1000 + Math.random() * 9000
-      )}`;
+      typeof codigoPropuesta === 'string' &&
+      codigoPropuesta.trim().length > 0
+        ? codigoPropuesta.trim()
+        : `ArchiveX-${Date.now()}-${Math.floor(
+            1000 + Math.random() * 9000
+          )}`;
 
     // ========================================================
     // RUTAS DE ARCHIVOS
@@ -172,15 +232,14 @@ const createPostulacion = async (req, res) => {
     const nuevaSolicitudId =
       await Solicitud.create({
         usuario_id: usuarioId,
-        convocatoria_id: parseInt(
-          convocatoriaId,
-          10
-        ),
-        sede_id: parseInt(sede, 10),
+        convocatoria_id: convocatoriaIdNumerico,
+        sede_id: sedeIdNumerico,
         num_solicitud: finalCodigoPropuesta,
-        titulo_propuesta,
+        titulo_propuesta: tituloFinal,
         observaciones:
-          observaciones || null,
+          typeof observaciones === 'string'
+            ? observaciones.trim() || null
+            : null,
         estado: 'Radicado',
         presupuesto_url,
         cronograma_url,
@@ -196,7 +255,7 @@ const createPostulacion = async (req, res) => {
         id: nuevaSolicitudId,
         codigoPropuesta:
           finalCodigoPropuesta,
-        titulo_propuesta,
+        titulo_propuesta: tituloFinal,
         usuarioId,
         archivos: {
           presupuesto_url,
@@ -420,6 +479,24 @@ const updateEstadoPostulacion = async (req, res) => {
       });
     }
 
+    // ========================================================
+    // VALIDACIÓN DEL ID
+    // ========================================================
+
+    const idNumerico =
+      Number.parseInt(id, 10);
+
+    if (
+      !Number.isInteger(idNumerico) ||
+      idNumerico <= 0
+    ) {
+      return res.status(400).json({
+        status: 'error',
+        message:
+          'El identificador de la propuesta no es válido.'
+      });
+    }
+
     // El motivo solo tiene sentido cuando la propuesta
     // es rechazada.
     const motivoFinal =
@@ -433,7 +510,7 @@ const updateEstadoPostulacion = async (req, res) => {
 
     const affectedRows =
       await Solicitud.updateEstado(
-        id,
+        idNumerico,
         estado,
         motivoFinal
       );

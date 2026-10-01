@@ -1,23 +1,69 @@
-const Solicitud = require('../models/solicitudModel');
-const Trazabilidad = require('../models/trazabilidadModel');
-const db = require('../config/db');
+const Solicitud =
+  require('../models/solicitudModel');
+
+const Trazabilidad =
+  require('../models/trazabilidadModel');
+
+const db =
+  require('../config/db');
+
+const fs =
+  require('fs');
+
+const path =
+  require('path');
+
+const {
+  PRIVATE_DIR
+} = require('../config/uploadPaths');
+
+// ============================================================
+// CONSTANTES
+// ============================================================
+
+const ESTADOS_VALIDOS = [
+  'Borrador',
+  'Radicado',
+  'En Evaluación',
+  'Aprobado',
+  'Rechazado'
+];
+
+const TIPOS_DOCUMENTO_VALIDOS = [
+  'Presupuesto',
+  'Cronograma',
+  'Honestidad',
+  'Identidad',
+  'Otros'
+];
 
 // ============================================================
 // UTILIDADES
 // ============================================================
 
-const generarRadicadoRandom = (prefijo = 'SOL') => {
-  const caracteres = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+const generarRadicadoRandom = (
+  prefijo = 'SOL'
+) => {
+  const caracteres =
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
   let resultado = '';
 
   for (let i = 0; i < 5; i++) {
     resultado += caracteres.charAt(
-      Math.floor(Math.random() * caracteres.length)
+      Math.floor(
+        Math.random() *
+          caracteres.length
+      )
     );
   }
 
   return `${prefijo}-${resultado}`;
 };
+
+// ============================================================
+// OBTENER ROL
+// ============================================================
 
 const obtenerRol = (req) => {
   const rolRaw =
@@ -27,11 +73,20 @@ const obtenerRol = (req) => {
     req.user?.tipo ||
     req.user?.tipo_usuario;
 
-  return String(rolRaw || '').trim().toLowerCase();
+  return String(
+    rolRaw || ''
+  )
+    .trim()
+    .toLowerCase();
 };
 
+// ============================================================
+// COMPROBAR ADMIN
+// ============================================================
+
 const esAdminUser = (req) => {
-  const rol = obtenerRol(req);
+  const rol =
+    obtenerRol(req);
 
   return (
     rol === 'admin' ||
@@ -40,7 +95,13 @@ const esAdminUser = (req) => {
   );
 };
 
-const obtenerUsuarioAutenticadoId = (req) => {
+// ============================================================
+// OBTENER ID AUTENTICADO
+// ============================================================
+
+const obtenerUsuarioAutenticadoId = (
+  req
+) => {
   return (
     req.user?.id ||
     req.user?.usuario_id ||
@@ -50,27 +111,511 @@ const obtenerUsuarioAutenticadoId = (req) => {
 };
 
 // ============================================================
+// VALIDAR ID
+// ============================================================
+
+const obtenerIdNumerico = (
+  valor
+) => {
+  const id =
+    Number.parseInt(
+      valor,
+      10
+    );
+
+  if (
+    !Number.isInteger(id) ||
+    id <= 0
+  ) {
+    return null;
+  }
+
+  return id;
+};
+
+// ============================================================
+// NORMALIZAR TEXTO
+// ============================================================
+
+const normalizarTexto = (
+  valor
+) => {
+  if (
+    typeof valor !== 'string'
+  ) {
+    return null;
+  }
+
+  const texto =
+    valor.trim();
+
+  return texto || null;
+};
+
+// ============================================================
+// RESOLVER SEDE POR NOMBRE
+// ============================================================
+//
+// No hacemos fallback a una sede arbitraria.
+//
+// Si el nombre no existe, se devuelve null y el controller
+// responderá con 400.
+// ============================================================
+
+const resolverSedePorNombre = async (
+  nombreSede
+) => {
+  const nombre =
+    normalizarTexto(
+      nombreSede
+    );
+
+  if (!nombre) {
+    return null;
+  }
+
+  const [
+    rows
+  ] = await db.query(
+    `
+      SELECT id
+      FROM sedes
+      WHERE nombre_sede = ?
+      LIMIT 1
+    `,
+    [nombre]
+  );
+
+  if (
+    !rows ||
+    rows.length === 0
+  ) {
+    return null;
+  }
+
+  return rows[0].id;
+};
+
+// ============================================================
+// VALIDAR EXISTENCIA DE REFERENCIAS
+// ============================================================
+
+const validarReferenciasSolicitud = async ({
+  usuarioId,
+  convocatoriaId,
+  sedeId
+}) => {
+  // ----------------------------------------------------------
+  // USUARIO
+  // ----------------------------------------------------------
+
+  const [
+    usuarioRows
+  ] = await db.query(
+    `
+      SELECT id
+      FROM usuarios
+      WHERE id = ?
+      LIMIT 1
+    `,
+    [usuarioId]
+  );
+
+  if (
+    usuarioRows.length === 0
+  ) {
+    return {
+      valido: false,
+      mensaje:
+        'El usuario asociado a la solicitud no existe.'
+    };
+  }
+
+  // ----------------------------------------------------------
+  // CONVOCATORIA
+  // ----------------------------------------------------------
+
+  const [
+    convocatoriaRows
+  ] = await db.query(
+    `
+      SELECT id
+      FROM convocatorias
+      WHERE id = ?
+      LIMIT 1
+    `,
+    [convocatoriaId]
+  );
+
+  if (
+    convocatoriaRows.length === 0
+  ) {
+    return {
+      valido: false,
+      mensaje:
+        'La convocatoria indicada no existe.'
+    };
+  }
+
+  // ----------------------------------------------------------
+  // SEDE
+  // ----------------------------------------------------------
+
+  const [
+    sedeRows
+  ] = await db.query(
+    `
+      SELECT id
+      FROM sedes
+      WHERE id = ?
+      LIMIT 1
+    `,
+    [sedeId]
+  );
+
+  if (
+    sedeRows.length === 0
+  ) {
+    return {
+      valido: false,
+      mensaje:
+        'La sede indicada no existe.'
+    };
+  }
+
+  return {
+    valido: true
+  };
+};
+
+// ============================================================
+// OBTENER ARCHIVOS PRIVADOS DE UNA SOLICITUD
+// ============================================================
+//
+// Se utilizan antes de eliminar o reemplazar documentos.
+//
+// Incluimos:
+//
+// - columnas principales de solicitudes;
+// - documentos_solicitud;
+// - actas de evaluación asociadas.
+//
+// Esto permite limpiar posteriormente archivos físicos
+// privados que ya no deben existir.
+// ============================================================
+
+const obtenerArchivosPrivadosSolicitud = async (
+  solicitudId
+) => {
+  const archivos = new Set();
+
+  const [
+    solicitudRows
+  ] = await db.query(
+    `
+      SELECT
+        presupuesto_url,
+        cronograma_url,
+        honestidad_url,
+        id_url
+      FROM solicitudes
+      WHERE id = ?
+      LIMIT 1
+    `,
+    [solicitudId]
+  );
+
+  if (
+    solicitudRows.length > 0
+  ) {
+    const solicitud =
+      solicitudRows[0];
+
+    [
+      solicitud.presupuesto_url,
+      solicitud.cronograma_url,
+      solicitud.honestidad_url,
+      solicitud.id_url
+    ].forEach(
+      (archivo) => {
+        if (archivo) {
+          archivos.add(
+            archivo
+          );
+        }
+      }
+    );
+  }
+
+  const [
+    documentosRows
+  ] = await db.query(
+    `
+      SELECT archivo_url
+      FROM documentos_solicitud
+      WHERE solicitud_id = ?
+    `,
+    [solicitudId]
+  );
+
+  for (
+    const documento of documentosRows
+  ) {
+    if (
+      documento.archivo_url
+    ) {
+      archivos.add(
+        documento.archivo_url
+      );
+    }
+  }
+
+  const [
+    evaluacionesRows
+  ] = await db.query(
+    `
+      SELECT archivo_evaluacion
+      FROM asignacion_evaluaciones
+      WHERE solicitud_id = ?
+    `,
+    [solicitudId]
+  );
+
+  for (
+    const evaluacion of evaluacionesRows
+  ) {
+    if (
+      evaluacion.archivo_evaluacion
+    ) {
+      archivos.add(
+        evaluacion.archivo_evaluacion
+      );
+    }
+  }
+
+  return [
+    ...archivos
+  ];
+};
+
+// ============================================================
+// RESOLVER ARCHIVO PRIVADO DE FORMA SEGURA
+// ============================================================
+
+const obtenerRutaArchivoPrivado = (
+  archivoUrl
+) => {
+  if (!archivoUrl) {
+    return null;
+  }
+
+  const valorNormalizado =
+    String(archivoUrl)
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '');
+
+  const nombreArchivo =
+    path.basename(
+      valorNormalizado
+    );
+
+  if (
+    !nombreArchivo ||
+    nombreArchivo === '.' ||
+    nombreArchivo !==
+      valorNormalizado
+        .split('/')
+        .pop()
+  ) {
+    return null;
+  }
+
+  const privateRoot =
+    path.resolve(
+      PRIVATE_DIR
+    );
+
+  const rutaArchivo =
+    path.resolve(
+      privateRoot,
+      nombreArchivo
+    );
+
+  if (
+    rutaArchivo !==
+      privateRoot &&
+    !rutaArchivo.startsWith(
+      `${privateRoot}${path.sep}`
+    )
+  ) {
+    return null;
+  }
+
+  return rutaArchivo;
+};
+
+// ============================================================
+// ELIMINAR ARCHIVO PRIVADO
+// ============================================================
+
+const eliminarArchivoPrivado = async (
+  archivoUrl
+) => {
+  const rutaArchivo =
+    obtenerRutaArchivoPrivado(
+      archivoUrl
+    );
+
+  if (!rutaArchivo) {
+    return;
+  }
+
+  try {
+    await fs.promises.unlink(
+      rutaArchivo
+    );
+  } catch (error) {
+    if (
+      error.code !==
+      'ENOENT'
+    ) {
+      console.error(
+        'Error al eliminar archivo privado:',
+        error
+      );
+    }
+  }
+};
+
+// ============================================================
+// ELIMINAR VARIOS ARCHIVOS PRIVADOS
+// ============================================================
+
+const eliminarArchivosPrivados = async (
+  archivos
+) => {
+  if (
+    !Array.isArray(
+      archivos
+    )
+  ) {
+    return;
+  }
+
+  await Promise.all(
+    archivos.map(
+      (archivo) =>
+        eliminarArchivoPrivado(
+          archivo
+        )
+    )
+  );
+};
+
+// ============================================================
+// OBTENER ARCHIVOS NUEVOS DE MULTER
+// ============================================================
+
+const obtenerArchivosCargados = (
+  req
+) => {
+  const archivos = [];
+
+  const campos = [
+    {
+      campo:
+        'presupuesto',
+      tipo:
+        'Presupuesto'
+    },
+    {
+      campo:
+        'cronograma',
+      tipo:
+        'Cronograma'
+    },
+    {
+      campo:
+        'honestidad',
+      tipo:
+        'Honestidad'
+    },
+    {
+      campo:
+        'identidad',
+      tipo:
+        'Identidad'
+    }
+  ];
+
+  for (
+    const campo of campos
+  ) {
+    const archivosCampo =
+      req.files?.[
+        campo.campo
+      ];
+
+    if (
+      archivosCampo &&
+      archivosCampo[0]
+    ) {
+      archivos.push({
+        file:
+          archivosCampo[0],
+        tipo:
+          campo.tipo
+      });
+    }
+  }
+
+  return archivos;
+};
+
+// ============================================================
 // OBTENER SOLICITUDES GENERALES
 // ============================================================
 
-const getSolicitudes = async (req, res) => {
+const getSolicitudes = async (
+  req,
+  res
+) => {
   try {
     if (!req.user) {
       return res.status(401).json({
-        status: 'error',
-        message: 'No autenticado.'
+        status:
+          'error',
+        message:
+          'No autenticado.'
       });
     }
 
-    const logueadoId = obtenerUsuarioAutenticadoId(req);
-    const esAdmin = esAdminUser(req);
+    const logueadoId =
+      obtenerUsuarioAutenticadoId(
+        req
+      );
+
+    const esAdmin =
+      esAdminUser(req);
+
+    if (!logueadoId) {
+      return res.status(401).json({
+        status:
+          'error',
+        message:
+          'No se pudo identificar al usuario autenticado.'
+      });
+    }
 
     if (esAdmin) {
-      const solicitudes = await Solicitud.getAll();
+      const solicitudes =
+        await Solicitud.getAll();
 
       return res.status(200).json({
-        status: 'success',
-        data: solicitudes
+        status:
+          'success',
+        data:
+          solicitudes
       });
     }
 
@@ -89,33 +634,54 @@ const getSolicitudes = async (req, res) => {
         s.doc_par_1,
         s.doc_par_2,
         s.created_at AS fecha_radicacion,
+
         u.nombre_completo AS docente_nombre,
+
         c.titulo AS convocatoria,
+
         se.nombre_sede AS nombre_sede,
         se.id AS Sede
+
       FROM solicitudes s
+
       LEFT JOIN usuarios u
         ON s.usuario_id = u.id
+
       LEFT JOIN convocatorias c
         ON s.convocatoria_id = c.id
+
       LEFT JOIN sedes se
         ON s.sede_id = se.id
+
       WHERE s.usuario_id = ?
+
       ORDER BY s.created_at DESC
     `;
 
-    const [solicitudes] = await db.query(query, [logueadoId]);
+    const [
+      solicitudes
+    ] = await db.query(
+      query,
+      [logueadoId]
+    );
 
     return res.status(200).json({
-      status: 'success',
-      data: solicitudes
+      status:
+        'success',
+      data:
+        solicitudes
     });
   } catch (error) {
-    console.error('Error en getSolicitudes:', error);
+    console.error(
+      'Error en getSolicitudes:',
+      error
+    );
 
     return res.status(500).json({
-      status: 'error',
-      message: 'Error al obtener las solicitudes'
+      status:
+        'error',
+      message:
+        'Error al obtener las solicitudes.'
     });
   }
 };
@@ -124,17 +690,27 @@ const getSolicitudes = async (req, res) => {
 // OBTENER MIS SOLICITUDES
 // ============================================================
 
-const getMisSolicitudes = async (req, res) => {
+const getMisSolicitudes = async (
+  req,
+  res
+) => {
   try {
-    if (!req.user) {
+    const logueadoId =
+      obtenerUsuarioAutenticadoId(
+        req
+      );
+
+    if (!logueadoId) {
       return res.status(401).json({
-        status: 'error',
-        message: 'No autenticado.'
+        status:
+          'error',
+        message:
+          'No se pudo identificar al usuario autenticado.'
       });
     }
 
-    const logueadoId = obtenerUsuarioAutenticadoId(req);
-    const esAdmin = esAdminUser(req);
+    const esAdmin =
+      esAdminUser(req);
 
     let query;
     let queryParams = [];
@@ -155,18 +731,26 @@ const getMisSolicitudes = async (req, res) => {
           s.doc_par_1,
           s.doc_par_2,
           s.created_at AS fecha_radicacion,
+
           u.nombre_completo AS docente_nombre,
           u.email AS docente_correo,
+
           c.titulo AS convocatoria,
+
           se.nombre_sede AS nombre_sede,
           se.id AS Sede
+
         FROM solicitudes s
+
         LEFT JOIN usuarios u
           ON s.usuario_id = u.id
+
         LEFT JOIN convocatorias c
           ON s.convocatoria_id = c.id
+
         LEFT JOIN sedes se
           ON s.sede_id = se.id
+
         ORDER BY s.created_at DESC
       `;
     } else {
@@ -185,37 +769,60 @@ const getMisSolicitudes = async (req, res) => {
           s.doc_par_1,
           s.doc_par_2,
           s.created_at AS fecha_radicacion,
+
           u.nombre_completo AS docente_nombre,
           u.email AS docente_correo,
+
           c.titulo AS convocatoria,
+
           se.nombre_sede AS nombre_sede,
           se.id AS Sede
+
         FROM solicitudes s
+
         LEFT JOIN usuarios u
           ON s.usuario_id = u.id
+
         LEFT JOIN convocatorias c
           ON s.convocatoria_id = c.id
+
         LEFT JOIN sedes se
           ON s.sede_id = se.id
+
         WHERE s.usuario_id = ?
+
         ORDER BY s.created_at DESC
       `;
 
-      queryParams.push(logueadoId);
+      queryParams.push(
+        logueadoId
+      );
     }
 
-    const [solicitudes] = await db.query(query, queryParams);
+    const [
+      solicitudes
+    ] = await db.query(
+      query,
+      queryParams
+    );
 
     return res.status(200).json({
-      status: 'success',
-      data: solicitudes
+      status:
+        'success',
+      data:
+        solicitudes
     });
   } catch (error) {
-    console.error('Error en getMisSolicitudes:', error);
+    console.error(
+      'Error en getMisSolicitudes:',
+      error
+    );
 
     return res.status(500).json({
-      status: 'error',
-      message: 'Error al obtener tus solicitudes'
+      status:
+        'error',
+      message:
+        'Error al obtener tus solicitudes.'
     });
   }
 };
@@ -224,42 +831,91 @@ const getMisSolicitudes = async (req, res) => {
 // OBTENER SOLICITUD POR ID
 // ============================================================
 
-const getSolicitudById = async (req, res) => {
+const getSolicitudById = async (
+  req,
+  res
+) => {
   try {
-    const { id } = req.params;
-    const logueadoId = obtenerUsuarioAutenticadoId(req);
+    const id =
+      obtenerIdNumerico(
+        req.params.id
+      );
 
-    const solicitud = await Solicitud.getById(id);
-
-    if (!solicitud) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Solicitud no encontrada'
+    if (!id) {
+      return res.status(400).json({
+        status:
+          'error',
+        message:
+          'El identificador de la solicitud no es válido.'
       });
     }
 
-    const esAdmin = esAdminUser(req);
-    const esDuenio =
-      String(solicitud.usuario_id) === String(logueadoId);
+    const logueadoId =
+      obtenerUsuarioAutenticadoId(
+        req
+      );
 
-    if (!esAdmin && !esDuenio) {
-      return res.status(403).json({
-        status: 'error',
+    if (!logueadoId) {
+      return res.status(401).json({
+        status:
+          'error',
         message:
-          'Acceso denegado: No tienes permiso para ver esta solicitud'
+          'No se pudo identificar al usuario autenticado.'
+      });
+    }
+
+    const solicitud =
+      await Solicitud.getById(id);
+
+    if (!solicitud) {
+      return res.status(404).json({
+        status:
+          'error',
+        message:
+          'Solicitud no encontrada.'
+      });
+    }
+
+    const esAdmin =
+      esAdminUser(req);
+
+    const esDuenio =
+      String(
+        solicitud.usuario_id
+      ) ===
+      String(
+        logueadoId
+      );
+
+    if (
+      !esAdmin &&
+      !esDuenio
+    ) {
+      return res.status(403).json({
+        status:
+          'error',
+        message:
+          'Acceso denegado: no tienes permiso para ver esta solicitud.'
       });
     }
 
     return res.status(200).json({
-      status: 'success',
-      data: solicitud
+      status:
+        'success',
+      data:
+        solicitud
     });
   } catch (error) {
-    console.error('Error en getSolicitudById:', error);
+    console.error(
+      'Error en getSolicitudById:',
+      error
+    );
 
     return res.status(500).json({
-      status: 'error',
-      message: 'Error al obtener la solicitud'
+      status:
+        'error',
+      message:
+        'Error al obtener la solicitud.'
     });
   }
 };
@@ -268,15 +924,60 @@ const getSolicitudById = async (req, res) => {
 // CREAR SOLICITUD
 // ============================================================
 
-const createSolicitud = async (req, res) => {
-  try {
-    let usuario_id = obtenerUsuarioAutenticadoId(req);
-    const esAdmin = esAdminUser(req);
+const createSolicitud = async (
+  req,
+  res
+) => {
+  const archivosNuevos =
+    obtenerArchivosCargados(
+      req
+    );
 
-    // Solo Admin puede crear una solicitud para otro usuario.
-    // Un usuario normal siempre queda asociado a su propia identidad.
-    if (esAdmin && req.body.usuario_id) {
-      usuario_id = req.body.usuario_id;
+  try {
+    const esAdmin =
+      esAdminUser(req);
+
+    let usuario_id =
+      obtenerUsuarioAutenticadoId(
+        req
+      );
+
+    if (!usuario_id) {
+      return res.status(401).json({
+        status:
+          'error',
+        message:
+          'No se pudo identificar al usuario autenticado.'
+      });
+    }
+
+    // --------------------------------------------------------
+    // ADMIN PUEDE CREAR PARA OTRO USUARIO
+    // --------------------------------------------------------
+
+    if (
+      esAdmin &&
+      req.body.usuario_id !==
+        undefined &&
+      req.body.usuario_id !==
+        null &&
+      String(
+        req.body.usuario_id
+      ).trim() !== ''
+    ) {
+      usuario_id =
+        obtenerIdNumerico(
+          req.body.usuario_id
+        );
+
+      if (!usuario_id) {
+        return res.status(400).json({
+          status:
+            'error',
+          message:
+            'El identificador del usuario no es válido.'
+        });
+      }
     }
 
     let {
@@ -288,221 +989,291 @@ const createSolicitud = async (req, res) => {
       sede_vinculacion
     } = req.body;
 
-    if (!sede_id && sede_vinculacion) {
-      try {
-        const [rows] = await db.query(
-          'SELECT id FROM sedes WHERE nombre_sede = ?',
-          [sede_vinculacion]
+    // --------------------------------------------------------
+    // NORMALIZAR IDS
+    // --------------------------------------------------------
+
+    convocatoria_id =
+      obtenerIdNumerico(
+        convocatoria_id
+      );
+
+    if (
+      !sede_id &&
+      sede_vinculacion
+    ) {
+      sede_id =
+        await resolverSedePorNombre(
+          sede_vinculacion
         );
 
-        if (rows && rows.length > 0) {
-          sede_id = rows[0].id;
-        }
-      } catch (error) {
-        console.error(
-          'No se pudo consultar la sede:',
-          error.message
-        );
-
-        const sedesMap = {
-          Apartadó: 1,
-          Arauca: 2,
-          Barrancabermeja: 3,
-          Bogotá: 4,
-          Bucaramanga: 5,
-          Cali: 6,
-          Cartago: 7,
-          'El Espinal': 8,
-          Ibagué: 9,
-          Medellín: 10,
-          Montería: 11,
-          Neiva: 12,
-          Pasto: 13,
-          Pereira: 14,
-          Popayán: 15,
-          Quibdó: 16,
-          'Santa Marta': 17,
-          Villavicencio: 18
-        };
-
-        sede_id = sedesMap[sede_vinculacion] || 1;
+      if (!sede_id) {
+        return res.status(400).json({
+          status:
+            'error',
+          message:
+            'La sede indicada no existe.'
+        });
       }
+    } else {
+      sede_id =
+        obtenerIdNumerico(
+          sede_id
+        );
     }
+
+    // --------------------------------------------------------
+    // CAMPOS OBLIGATORIOS
+    // --------------------------------------------------------
+
+    const tituloFinal =
+      normalizarTexto(
+        titulo_propuesta
+      );
 
     if (
       !usuario_id ||
       !convocatoria_id ||
       !sede_id ||
-      !titulo_propuesta
+      !tituloFinal
     ) {
       return res.status(400).json({
-        status: 'error',
+        status:
+          'error',
         message:
-          'Los campos usuario_id, convocatoria_id, sede_id (o sede_vinculacion) y titulo_propuesta son obligatorios'
+          'Los campos usuario, convocatoria, sede y título son obligatorios.'
       });
     }
 
-    if (!num_solicitud || num_solicitud.trim() === '') {
-      num_solicitud = generarRadicadoRandom();
-    } else {
-      num_solicitud = num_solicitud.trim().toUpperCase();
+    // --------------------------------------------------------
+    // REFERENCIAS
+    // --------------------------------------------------------
+
+    const referencias =
+      await validarReferenciasSolicitud({
+        usuarioId:
+          usuario_id,
+        convocatoriaId:
+          convocatoria_id,
+        sedeId:
+          sede_id
+      });
+
+    if (
+      !referencias.valido
+    ) {
+      return res.status(400).json({
+        status:
+          'error',
+        message:
+          referencias.mensaje
+      });
     }
 
-    // ========================================================
-    // V11 — ESTADO INICIAL CONTROLADO POR EL BACKEND
-    // ========================================================
-    //
-    // El cliente NO puede crear directamente una solicitud como:
-    //
-    // Aprobado
-    // Rechazado
-    // En Evaluación
-    //
-    // Toda solicitud nueva inicia como Borrador.
-    //
+    // --------------------------------------------------------
+    // TÍTULO
+    // --------------------------------------------------------
 
-    const estadoInicial = 'Borrador';
+    if (
+      tituloFinal.length >
+      255
+    ) {
+      return res.status(400).json({
+        status:
+          'error',
+        message:
+          'El título de la propuesta no puede superar los 255 caracteres.'
+      });
+    }
 
-    // ========================================================
+    // --------------------------------------------------------
+    // RADICADO
+    // --------------------------------------------------------
+
+    if (
+      !num_solicitud ||
+      String(
+        num_solicitud
+      ).trim() === ''
+    ) {
+      num_solicitud =
+        generarRadicadoRandom();
+    } else {
+      num_solicitud =
+        String(
+          num_solicitud
+        )
+          .trim()
+          .toUpperCase();
+
+      if (
+        num_solicitud.length >
+        50
+      ) {
+        return res.status(400).json({
+          status:
+            'error',
+          message:
+            'El número de solicitud no puede superar los 50 caracteres.'
+        });
+      }
+    }
+
+    // --------------------------------------------------------
+    // OBSERVACIONES
+    // --------------------------------------------------------
+
+    const observacionesFinal =
+      normalizarTexto(
+        observaciones
+      );
+
+    // --------------------------------------------------------
+    // ESTADO INICIAL
+    // --------------------------------------------------------
+    //
+    // Nunca tomamos estado desde req.body.
+    // --------------------------------------------------------
+
+    const estadoInicial =
+      'Borrador';
+
+    // --------------------------------------------------------
     // DOCUMENTOS
-    // ========================================================
+    // --------------------------------------------------------
 
     const urlPresupuesto =
-      req.files && req.files['presupuesto']
-        ? '/uploads_private/' +
-          req.files['presupuesto'][0].filename
+      req.files?.presupuesto?.[0]
+        ? `/uploads_private/${req.files.presupuesto[0].filename}`
         : null;
 
     const urlCronograma =
-      req.files && req.files['cronograma']
-        ? '/uploads_private/' +
-          req.files['cronograma'][0].filename
+      req.files?.cronograma?.[0]
+        ? `/uploads_private/${req.files.cronograma[0].filename}`
         : null;
 
     const urlHonestidad =
-      req.files && req.files['honestidad']
-        ? '/uploads_private/' +
-          req.files['honestidad'][0].filename
+      req.files?.honestidad?.[0]
+        ? `/uploads_private/${req.files.honestidad[0].filename}`
         : null;
 
     const urlIdentidad =
-      req.files && req.files['identidad']
-        ? '/uploads_private/' +
-          req.files['identidad'][0].filename
+      req.files?.identidad?.[0]
+        ? `/uploads_private/${req.files.identidad[0].filename}`
         : null;
 
-    const newId = await Solicitud.create({
-      usuario_id,
-      convocatoria_id,
-      sede_id,
-      num_solicitud,
-      titulo_propuesta,
-      observaciones,
-      estado: estadoInicial,
-      presupuesto_url: urlPresupuesto,
-      cronograma_url: urlCronograma,
-      honestidad_url: urlHonestidad,
-      id_url: urlIdentidad
-    });
+    // --------------------------------------------------------
+    // CREAR SOLICITUD
+    // --------------------------------------------------------
 
-    // ========================================================
-    // REGISTRO DE DOCUMENTOS
-    // ========================================================
+    const newId =
+      await Solicitud.create({
+        usuario_id,
+        convocatoria_id,
+        sede_id,
+        num_solicitud,
+        titulo_propuesta:
+          tituloFinal,
+        observaciones:
+          observacionesFinal,
+        estado:
+          estadoInicial,
+        presupuesto_url:
+          urlPresupuesto,
+        cronograma_url:
+          urlCronograma,
+        honestidad_url:
+          urlHonestidad,
+        id_url:
+          urlIdentidad
+      });
 
-    const filesToUpload = [];
+    // --------------------------------------------------------
+    // INDEXAR DOCUMENTOS
+    // --------------------------------------------------------
 
-    if (req.files) {
-      if (
-        req.files['presupuesto'] &&
-        req.files['presupuesto'][0]
-      ) {
-        filesToUpload.push({
-          file: req.files['presupuesto'][0],
-          tipo: 'Presupuesto'
-        });
-      }
-
-      if (
-        req.files['cronograma'] &&
-        req.files['cronograma'][0]
-      ) {
-        filesToUpload.push({
-          file: req.files['cronograma'][0],
-          tipo: 'Cronograma'
-        });
-      }
-
-      if (
-        req.files['honestidad'] &&
-        req.files['honestidad'][0]
-      ) {
-        filesToUpload.push({
-          file: req.files['honestidad'][0],
-          tipo: 'Honestidad'
-        });
-      }
-
-      if (
-        req.files['identidad'] &&
-        req.files['identidad'][0]
-      ) {
-        filesToUpload.push({
-          file: req.files['identidad'][0],
-          tipo: 'Identidad'
-        });
-      }
-    }
-
-    if (filesToUpload.length > 0) {
+    if (
+      archivosNuevos.length >
+      0
+    ) {
       const queryDoc = `
         INSERT INTO documentos_solicitud
-          (solicitud_id, nombre_archivo, tipo_documento, archivo_url)
+        (
+          solicitud_id,
+          nombre_archivo,
+          tipo_documento,
+          archivo_url
+        )
         VALUES (?, ?, ?, ?)
       `;
 
-      for (const item of filesToUpload) {
-        const file = item.file;
+      for (
+        const item of archivosNuevos
+      ) {
+        const file =
+          item.file;
 
-        const urlArchivo =
-          '/uploads_private/' + file.filename;
-
-        await db.query(queryDoc, [
-          newId,
-          file.originalname,
-          item.tipo,
-          urlArchivo
-        ]);
+        await db.query(
+          queryDoc,
+          [
+            newId,
+            file.originalname,
+            item.tipo,
+            `/uploads_private/${file.filename}`
+          ]
+        );
       }
     }
 
-    // ========================================================
+    // --------------------------------------------------------
     // TRAZABILIDAD
-    // ========================================================
+    // --------------------------------------------------------
 
     await Trazabilidad.registrarCambio({
-      solicitud_id: newId,
+      solicitud_id:
+        newId,
       usuario_id,
-      estado_anterior: null,
-      estado_nuevo: estadoInicial,
+      estado_anterior:
+        null,
+      estado_nuevo:
+        estadoInicial,
       motivo_cambio:
         'Creación inicial de la solicitud con carga de documentos indexados.'
     });
 
     return res.status(201).json({
-      status: 'success',
+      status:
+        'success',
       message:
-        'Solicitud y documentos creados exitosamente',
+        'Solicitud y documentos creados exitosamente.',
       data: {
-        id: newId,
+        id:
+          newId,
         num_solicitud
       }
     });
   } catch (error) {
-    console.error('Error en createSolicitud:', error);
+    // --------------------------------------------------------
+    // LIMPIAR ARCHIVOS SI FALLÓ EL PROCESAMIENTO
+    // --------------------------------------------------------
+
+    await eliminarArchivosPrivados(
+      archivosNuevos.map(
+        (item) =>
+          `/uploads_private/${item.file.filename}`
+      )
+    );
+
+    console.error(
+      'Error en createSolicitud:',
+      error
+    );
 
     return res.status(500).json({
-      status: 'error',
-      message: 'Error al crear la solicitud'
+      status:
+        'error',
+      message:
+        'Error al crear la solicitud.'
     });
   }
 };
@@ -511,42 +1282,155 @@ const createSolicitud = async (req, res) => {
 // ACTUALIZAR SOLICITUD
 // ============================================================
 
-const updateSolicitud = async (req, res) => {
+const updateSolicitud = async (
+  req,
+  res
+) => {
+  const archivosNuevos =
+    obtenerArchivosCargados(
+      req
+    );
+
   try {
-    const { id } = req.params;
+    const id =
+      obtenerIdNumerico(
+        req.params.id
+      );
 
-    const logueadoId = obtenerUsuarioAutenticadoId(req);
-    const esAdmin = esAdminUser(req);
+    if (!id) {
+      await eliminarArchivosPrivados(
+        archivosNuevos.map(
+          (item) =>
+            `/uploads_private/${item.file.filename}`
+        )
+      );
 
-    const solicitudPrevia = await Solicitud.getById(id);
+      return res.status(400).json({
+        status:
+          'error',
+        message:
+          'El identificador de la solicitud no es válido.'
+      });
+    }
+
+    const logueadoId =
+      obtenerUsuarioAutenticadoId(
+        req
+      );
+
+    if (!logueadoId) {
+      await eliminarArchivosPrivados(
+        archivosNuevos.map(
+          (item) =>
+            `/uploads_private/${item.file.filename}`
+        )
+      );
+
+      return res.status(401).json({
+        status:
+          'error',
+        message:
+          'No se pudo identificar al usuario autenticado.'
+      });
+    }
+
+    const esAdmin =
+      esAdminUser(req);
+
+    const solicitudPrevia =
+      await Solicitud.getById(
+        id
+      );
 
     if (!solicitudPrevia) {
+      await eliminarArchivosPrivados(
+        archivosNuevos.map(
+          (item) =>
+            `/uploads_private/${item.file.filename}`
+        )
+      );
+
       return res.status(404).json({
-        status: 'error',
+        status:
+          'error',
         message:
-          'Solicitud no encontrada para actualizar'
+          'Solicitud no encontrada para actualizar.'
       });
     }
 
     const esDuenio =
-      String(solicitudPrevia.usuario_id) ===
-      String(logueadoId);
+      String(
+        solicitudPrevia.usuario_id
+      ) ===
+      String(
+        logueadoId
+      );
 
-    // Solo el dueño o un Admin pueden modificar.
-    if (!esAdmin && !esDuenio) {
+    // --------------------------------------------------------
+    // OWNERSHIP
+    // --------------------------------------------------------
+
+    if (
+      !esAdmin &&
+      !esDuenio
+    ) {
+      await eliminarArchivosPrivados(
+        archivosNuevos.map(
+          (item) =>
+            `/uploads_private/${item.file.filename}`
+        )
+      );
+
       return res.status(403).json({
-        status: 'error',
+        status:
+          'error',
         message:
-          'Acceso denegado: No puedes modificar una propuesta ajena'
+          'Acceso denegado: no puedes modificar una propuesta ajena.'
       });
     }
 
-    let usuario_id = solicitudPrevia.usuario_id;
+    // --------------------------------------------------------
+    // USUARIO
+    // --------------------------------------------------------
 
-    // Solo Admin puede reasignar una solicitud a otro usuario.
-    if (esAdmin && req.body.usuario_id) {
-      usuario_id = req.body.usuario_id;
+    let usuario_id =
+      solicitudPrevia.usuario_id;
+
+    if (
+      esAdmin &&
+      req.body.usuario_id !==
+        undefined &&
+      req.body.usuario_id !==
+        null &&
+      String(
+        req.body.usuario_id
+      ).trim() !== ''
+    ) {
+      usuario_id =
+        obtenerIdNumerico(
+          req.body.usuario_id
+        );
+
+      if (!usuario_id) {
+        await eliminarArchivosPrivados(
+          archivosNuevos.map(
+            (item) =>
+              `/uploads_private/${item.file.filename}`
+          )
+        );
+
+        return res.status(400).json({
+          status:
+            'error',
+          message:
+            'El identificador del usuario no es válido.'
+        });
+      }
     }
+
+    // --------------------------------------------------------
+    // DATOS PRINCIPALES
+    // --------------------------------------------------------
 
     let {
       convocatoria_id,
@@ -560,278 +1444,569 @@ const updateSolicitud = async (req, res) => {
       sede_vinculacion
     } = req.body;
 
-    // ========================================================
-    // V11 — PROTECCIÓN DE ESTADO ADMINISTRATIVO
-    // ========================================================
-    //
-    // El cliente no puede cambiar libremente el estado.
-    //
-    // Admin:
-    //   puede cambiarlo.
-    //
-    // No Admin:
-    //   puede actualizar los demás datos de su propia solicitud,
-    //   pero NO puede cambiar el estado ni el motivo de decisión.
-    //
-    // Si intenta mandar un estado diferente al actual,
-    // rechazamos la operación con 403.
-    //
+    convocatoria_id =
+      convocatoria_id !==
+        undefined &&
+      convocatoria_id !==
+        null &&
+      String(
+        convocatoria_id
+      ).trim() !== ''
+        ? obtenerIdNumerico(
+            convocatoria_id
+          )
+        : solicitudPrevia.convocatoria_id;
+
+    // --------------------------------------------------------
+    // SEDE
+    // --------------------------------------------------------
+
+    if (
+      !sede_id &&
+      sede_vinculacion
+    ) {
+      sede_id =
+        await resolverSedePorNombre(
+          sede_vinculacion
+        );
+
+      if (!sede_id) {
+        await eliminarArchivosPrivados(
+          archivosNuevos.map(
+            (item) =>
+              `/uploads_private/${item.file.filename}`
+          )
+        );
+
+        return res.status(400).json({
+          status:
+            'error',
+          message:
+            'La sede indicada no existe.'
+        });
+      }
+    } else if (
+      sede_id !==
+        undefined &&
+      sede_id !==
+        null &&
+      String(
+        sede_id
+      ).trim() !== ''
+    ) {
+      sede_id =
+        obtenerIdNumerico(
+          sede_id
+        );
+    } else {
+      sede_id =
+        solicitudPrevia.sede_id ||
+        solicitudPrevia.Sede;
+    }
+
+    // --------------------------------------------------------
+    // VALIDAR REFERENCIAS
+    // --------------------------------------------------------
+
+    if (
+      !usuario_id ||
+      !convocatoria_id ||
+      !sede_id
+    ) {
+      await eliminarArchivosPrivados(
+        archivosNuevos.map(
+          (item) =>
+            `/uploads_private/${item.file.filename}`
+        )
+      );
+
+      return res.status(400).json({
+        status:
+          'error',
+        message:
+          'Los datos de usuario, convocatoria y sede no son válidos.'
+      });
+    }
+
+    const referencias =
+      await validarReferenciasSolicitud({
+        usuarioId:
+          usuario_id,
+        convocatoriaId:
+          convocatoria_id,
+        sedeId:
+          sede_id
+      });
+
+    if (
+      !referencias.valido
+    ) {
+      await eliminarArchivosPrivados(
+        archivosNuevos.map(
+          (item) =>
+            `/uploads_private/${item.file.filename}`
+        )
+      );
+
+      return res.status(400).json({
+        status:
+          'error',
+        message:
+          referencias.mensaje
+      });
+    }
+
+    // --------------------------------------------------------
+    // TÍTULO
+    // --------------------------------------------------------
+
+    titulo_propuesta =
+      normalizarTexto(
+        titulo_propuesta
+      );
+
+    if (
+      !titulo_propuesta
+    ) {
+      await eliminarArchivosPrivados(
+        archivosNuevos.map(
+          (item) =>
+            `/uploads_private/${item.file.filename}`
+        )
+      );
+
+      return res.status(400).json({
+        status:
+          'error',
+        message:
+          'El título de la propuesta es obligatorio.'
+      });
+    }
+
+    if (
+      titulo_propuesta.length >
+      255
+    ) {
+      await eliminarArchivosPrivados(
+        archivosNuevos.map(
+          (item) =>
+            `/uploads_private/${item.file.filename}`
+        )
+      );
+
+      return res.status(400).json({
+        status:
+          'error',
+        message:
+          'El título de la propuesta no puede superar los 255 caracteres.'
+      });
+    }
+
+    // --------------------------------------------------------
+    // RADICADO
+    // --------------------------------------------------------
+
+    if (
+      !num_solicitud ||
+      String(
+        num_solicitud
+      ).trim() === ''
+    ) {
+      num_solicitud =
+        solicitudPrevia.codigoPropuesta ||
+        solicitudPrevia.num_solicitud;
+    } else {
+      num_solicitud =
+        String(
+          num_solicitud
+        )
+          .trim()
+          .toUpperCase();
+
+      if (
+        num_solicitud.length >
+        50
+      ) {
+        await eliminarArchivosPrivados(
+          archivosNuevos.map(
+            (item) =>
+              `/uploads_private/${item.file.filename}`
+          )
+        );
+
+        return res.status(400).json({
+          status:
+            'error',
+          message:
+            'El número de solicitud no puede superar los 50 caracteres.'
+        });
+      }
+    }
+
+    // --------------------------------------------------------
+    // OBSERVACIONES
+    // --------------------------------------------------------
+
+    observaciones =
+      normalizarTexto(
+        observaciones
+      );
+
+    // Si el frontend no envía observaciones, conservamos las
+    // existentes.
+    if (
+      observaciones ===
+        null &&
+      req.body.observaciones ===
+        undefined
+    ) {
+      observaciones =
+        solicitudPrevia.observaciones;
+    }
+
+    // --------------------------------------------------------
+    // ESTADO
+    // --------------------------------------------------------
+
+    const estadoAnterior =
+      solicitudPrevia.estado;
 
     if (!esAdmin) {
       const estadoSolicitado =
-        typeof estado === 'string'
-          ? estado.trim()
-          : estado;
-
-      const estadoActual =
-        typeof solicitudPrevia.estado === 'string'
-          ? solicitudPrevia.estado.trim()
-          : solicitudPrevia.estado;
+        normalizarTexto(
+          estado
+        );
 
       if (
-        estadoSolicitado !== undefined &&
-        estadoSolicitado !== null &&
-        estadoSolicitado !== '' &&
-        String(estadoSolicitado).toLowerCase() !==
-          String(estadoActual).toLowerCase()
+        estadoSolicitado &&
+        estadoSolicitado !==
+          estadoAnterior
       ) {
+        await eliminarArchivosPrivados(
+          archivosNuevos.map(
+            (item) =>
+              `/uploads_private/${item.file.filename}`
+          )
+        );
+
         return res.status(403).json({
-          status: 'error',
+          status:
+            'error',
           message:
             'No tienes permisos para cambiar el estado administrativo de la solicitud.'
         });
       }
 
-      // Aunque el cliente intente enviar otros valores,
-      // el backend conserva el estado real almacenado.
-      estado = solicitudPrevia.estado;
-      motivo_decision = solicitudPrevia.motivo_decision;
-      motivo_cambio = null;
+      estado =
+        estadoAnterior;
+
+      motivo_decision =
+        solicitudPrevia.motivo_decision;
+
+      motivo_cambio =
+        null;
     } else {
-      // Admin debe conservar el estado actual si no envía uno.
-      if (
-        estado === undefined ||
-        estado === null ||
-        String(estado).trim() === ''
-      ) {
-        estado = solicitudPrevia.estado;
-      }
-    }
-
-    // ========================================================
-    // SEDE
-    // ========================================================
-
-    if (!sede_id && sede_vinculacion) {
-      try {
-        const [rows] = await db.query(
-          'SELECT id FROM sedes WHERE nombre_sede = ?',
-          [sede_vinculacion]
-        );
-
-        if (rows && rows.length > 0) {
-          sede_id = rows[0].id;
-        }
-      } catch (error) {
-        console.error(
-          'No se pudo consultar la sede:',
-          error.message
-        );
-
-        const sedesMap = {
-          Apartadó: 1,
-          Arauca: 2,
-          Barrancabermeja: 3,
-          Bogotá: 4,
-          Bucaramanga: 5,
-          Cali: 6,
-          Cartago: 7,
-          'El Espinal': 8,
-          Ibagué: 9,
-          Medellín: 10,
-          Montería: 11,
-          Neiva: 12,
-          Pasto: 13,
-          Pereira: 14,
-          Popayán: 15,
-          Quibdó: 16,
-          'Santa Marta': 17,
-          Villavicencio: 18
-        };
-
-        sede_id = sedesMap[sede_vinculacion] || 1;
-      }
+      estado =
+        normalizarTexto(
+          estado
+        ) ||
+        estadoAnterior;
     }
 
     if (
-      !convocatoria_id ||
-      !sede_id ||
-      !estado ||
-      !titulo_propuesta
+      !ESTADOS_VALIDOS.includes(
+        estado
+      )
     ) {
+      await eliminarArchivosPrivados(
+        archivosNuevos.map(
+          (item) =>
+            `/uploads_private/${item.file.filename}`
+        )
+      );
+
       return res.status(400).json({
-        status: 'error',
+        status:
+          'error',
         message:
-          'Todos los campos principales son requeridos para actualizar'
+          'El estado proporcionado no es válido.'
       });
     }
 
-    if (!num_solicitud || num_solicitud.trim() === '') {
-      num_solicitud = solicitudPrevia.num_solicitud;
+    // --------------------------------------------------------
+    // MOTIVO DE DECISIÓN
+    // --------------------------------------------------------
+
+    if (
+      estado !==
+      'Rechazado'
+    ) {
+      motivo_decision =
+        null;
     } else {
-      num_solicitud = num_solicitud.trim().toUpperCase();
+      motivo_decision =
+        normalizarTexto(
+          motivo_decision
+        );
+
+      if (
+        motivo_decision &&
+        motivo_decision.length >
+          5000
+      ) {
+        await eliminarArchivosPrivados(
+          archivosNuevos.map(
+            (item) =>
+              `/uploads_private/${item.file.filename}`
+          )
+        );
+
+        return res.status(400).json({
+          status:
+            'error',
+          message:
+            'El motivo de decisión no puede superar los 5000 caracteres.'
+        });
+      }
     }
 
-    // ========================================================
-    // DOCUMENTOS
-    // ========================================================
+    // --------------------------------------------------------
+    // DOCUMENTOS ACTUALES
+    // --------------------------------------------------------
 
     const urlPresupuesto =
-      req.files && req.files['presupuesto']
-        ? '/uploads_private/' +
-          req.files['presupuesto'][0].filename
-        : solicitudPrevia.presupuesto_url;
+      req.files?.presupuesto?.[0]
+        ? `/uploads_private/${req.files.presupuesto[0].filename}`
+        : solicitudPrevia.presupuesto_url ||
+          solicitudPrevia.presupuesto ||
+          null;
 
     const urlCronograma =
-      req.files && req.files['cronograma']
-        ? '/uploads_private/' +
-          req.files['cronograma'][0].filename
-        : solicitudPrevia.cronograma_url;
+      req.files?.cronograma?.[0]
+        ? `/uploads_private/${req.files.cronograma[0].filename}`
+        : solicitudPrevia.cronograma_url ||
+          solicitudPrevia.cronograma ||
+          null;
 
     const urlHonestidad =
-      req.files && req.files['honestidad']
-        ? '/uploads_private/' +
-          req.files['honestidad'][0].filename
-        : solicitudPrevia.honestidad_url;
+      req.files?.honestidad?.[0]
+        ? `/uploads_private/${req.files.honestidad[0].filename}`
+        : solicitudPrevia.honestidad_url ||
+          solicitudPrevia.honestidad ||
+          null;
 
     const urlIdentidad =
-      req.files && req.files['identidad']
-        ? '/uploads_private/' +
-          req.files['identidad'][0].filename
-        : solicitudPrevia.id_url;
+      req.files?.identidad?.[0]
+        ? `/uploads_private/${req.files.identidad[0].filename}`
+        : solicitudPrevia.id_url ||
+          solicitudPrevia.id_documento ||
+          null;
 
-    const affectedRows = await Solicitud.update(id, {
-      usuario_id,
-      convocatoria_id,
-      sede_id,
-      num_solicitud,
-      titulo_propuesta,
-      observaciones,
-      estado,
-      motivo_decision,
-      doc_par_1: solicitudPrevia.doc_par_1,
-      doc_par_2: solicitudPrevia.doc_par_2,
-      presupuesto_url: urlPresupuesto,
-      cronograma_url: urlCronograma,
-      honestidad_url: urlHonestidad,
-      id_url: urlIdentidad
-    });
+    // --------------------------------------------------------
+    // ARCHIVOS ANTERIORES QUE SERÁN REEMPLAZADOS
+    // --------------------------------------------------------
 
-    // ========================================================
-    // REGISTRO DE DOCUMENTOS
-    // ========================================================
+    const archivosAReemplazar = [];
 
-    const filesToUpload = [];
-
-    if (req.files) {
-      if (
-        req.files['presupuesto'] &&
-        req.files['presupuesto'][0]
-      ) {
-        filesToUpload.push({
-          file: req.files['presupuesto'][0],
-          tipo: 'Presupuesto'
-        });
-      }
-
-      if (
-        req.files['cronograma'] &&
-        req.files['cronograma'][0]
-      ) {
-        filesToUpload.push({
-          file: req.files['cronograma'][0],
-          tipo: 'Cronograma'
-        });
-      }
-
-      if (
-        req.files['honestidad'] &&
-        req.files['honestidad'][0]
-      ) {
-        filesToUpload.push({
-          file: req.files['honestidad'][0],
-          tipo: 'Honestidad'
-        });
-      }
-
-      if (
-        req.files['identidad'] &&
-        req.files['identidad'][0]
-      ) {
-        filesToUpload.push({
-          file: req.files['identidad'][0],
-          tipo: 'Identidad'
-        });
-      }
+    if (
+      req.files?.presupuesto?.[0] &&
+      solicitudPrevia.presupuesto_url
+    ) {
+      archivosAReemplazar.push(
+        solicitudPrevia.presupuesto_url
+      );
     }
 
-    if (filesToUpload.length > 0) {
+    if (
+      req.files?.cronograma?.[0] &&
+      solicitudPrevia.cronograma_url
+    ) {
+      archivosAReemplazar.push(
+        solicitudPrevia.cronograma_url
+      );
+    }
+
+    if (
+      req.files?.honestidad?.[0] &&
+      solicitudPrevia.honestidad_url
+    ) {
+      archivosAReemplazar.push(
+        solicitudPrevia.honestidad_url
+      );
+    }
+
+    if (
+      req.files?.identidad?.[0] &&
+      solicitudPrevia.id_url
+    ) {
+      archivosAReemplazar.push(
+        solicitudPrevia.id_url
+      );
+    }
+
+    // --------------------------------------------------------
+    // ACTUALIZAR SOLICITUD
+    // --------------------------------------------------------
+
+    const affectedRows =
+      await Solicitud.update(
+        id,
+        {
+          usuario_id,
+          convocatoria_id,
+          sede_id,
+          num_solicitud,
+          titulo_propuesta,
+          observaciones,
+          estado,
+          motivo_decision,
+          doc_par_1:
+            solicitudPrevia.doc_par_1,
+          doc_par_2:
+            solicitudPrevia.doc_par_2,
+          presupuesto_url:
+            urlPresupuesto,
+          cronograma_url:
+            urlCronograma,
+          honestidad_url:
+            urlHonestidad,
+          id_url:
+            urlIdentidad
+        }
+      );
+
+    if (
+      affectedRows === 0
+    ) {
+      await eliminarArchivosPrivados(
+        archivosNuevos.map(
+          (item) =>
+            `/uploads_private/${item.file.filename}`
+        )
+      );
+
+      return res.status(404).json({
+        status:
+          'error',
+        message:
+          'No fue posible actualizar la solicitud.'
+      });
+    }
+
+    // --------------------------------------------------------
+    // INDEXAR DOCUMENTOS NUEVOS
+    // --------------------------------------------------------
+
+    if (
+      archivosNuevos.length >
+      0
+    ) {
       const queryDoc = `
         INSERT INTO documentos_solicitud
-          (solicitud_id, nombre_archivo, tipo_documento, archivo_url)
+        (
+          solicitud_id,
+          nombre_archivo,
+          tipo_documento,
+          archivo_url
+        )
         VALUES (?, ?, ?, ?)
       `;
 
-      for (const item of filesToUpload) {
-        const file = item.file;
+      for (
+        const item of archivosNuevos
+      ) {
+        if (
+          !TIPOS_DOCUMENTO_VALIDOS.includes(
+            item.tipo
+          )
+        ) {
+          continue;
+        }
 
-        const urlArchivo =
-          '/uploads_private/' + file.filename;
+        const file =
+          item.file;
 
-        await db.query(queryDoc, [
-          id,
-          file.originalname,
-          item.tipo,
-          urlArchivo
-        ]);
+        await db.query(
+          queryDoc,
+          [
+            id,
+            file.originalname,
+            item.tipo,
+            `/uploads_private/${file.filename}`
+          ]
+        );
       }
     }
 
-    // ========================================================
+    // --------------------------------------------------------
     // TRAZABILIDAD
-    // ========================================================
+    // --------------------------------------------------------
 
     if (
-      affectedRows > 0 ||
-      filesToUpload.length > 0
+      esAdmin &&
+      String(
+        estadoAnterior
+      ) !==
+        String(
+          estado
+        )
     ) {
-      if (
-        esAdmin &&
-        String(solicitudPrevia.estado) !==
-          String(estado)
-      ) {
-        await Trazabilidad.registrarCambio({
-          solicitud_id: id,
-          usuario_id: logueadoId,
-          estado_anterior: solicitudPrevia.estado,
-          estado_nuevo: estado,
-          motivo_cambio:
-            motivo_cambio ||
-            'Actualización o transición de estado de la propuesta con anexos.'
-        });
-      }
+      await Trazabilidad.registrarCambio({
+        solicitud_id:
+          id,
+        usuario_id:
+          logueadoId,
+        estado_anterior:
+          estadoAnterior,
+        estado_nuevo:
+          estado,
+        motivo_cambio:
+          motivo_cambio ||
+          'Actualización administrativa del estado de la solicitud.'
+      });
+    }
+
+    // --------------------------------------------------------
+    // LIMPIAR ARCHIVOS REEMPLAZADOS
+    // --------------------------------------------------------
+
+    if (
+      archivosAReemplazar.length >
+      0
+    ) {
+      await eliminarArchivosPrivados(
+        archivosAReemplazar
+      );
     }
 
     return res.status(200).json({
-      status: 'success',
-      message: 'Solicitud actualizada correctamente'
+      status:
+        'success',
+      message:
+        'Solicitud actualizada correctamente.'
     });
   } catch (error) {
-    console.error('Error en updateSolicitud:', error);
+    // --------------------------------------------------------
+    // SI FALLA EL PROCESAMIENTO, BORRAR SOLO LOS ARCHIVOS NUEVOS
+    // --------------------------------------------------------
+
+    await eliminarArchivosPrivados(
+      archivosNuevos.map(
+        (item) =>
+          `/uploads_private/${item.file.filename}`
+      )
+    );
+
+    console.error(
+      'Error en updateSolicitud:',
+      error
+    );
 
     return res.status(500).json({
-      status: 'error',
-      message: 'Error al actualizar la solicitud'
+      status:
+        'error',
+      message:
+        'Error al actualizar la solicitud.'
     });
   }
 };
@@ -840,47 +2015,134 @@ const updateSolicitud = async (req, res) => {
 // ELIMINAR SOLICITUD
 // ============================================================
 
-const deleteSolicitud = async (req, res) => {
+const deleteSolicitud = async (
+  req,
+  res
+) => {
   try {
-    const { id } = req.params;
+    const id =
+      obtenerIdNumerico(
+        req.params.id
+      );
 
-    const logueadoId = obtenerUsuarioAutenticadoId(req);
-    const esAdmin = esAdminUser(req);
+    if (!id) {
+      return res.status(400).json({
+        status:
+          'error',
+        message:
+          'El identificador de la solicitud no es válido.'
+      });
+    }
 
-    const solicitudPrevia = await Solicitud.getById(id);
+    const logueadoId =
+      obtenerUsuarioAutenticadoId(
+        req
+      );
+
+    if (!logueadoId) {
+      return res.status(401).json({
+        status:
+          'error',
+        message:
+          'No se pudo identificar al usuario autenticado.'
+      });
+    }
+
+    const esAdmin =
+      esAdminUser(req);
+
+    const solicitudPrevia =
+      await Solicitud.getById(
+        id
+      );
 
     if (!solicitudPrevia) {
       return res.status(404).json({
-        status: 'error',
+        status:
+          'error',
         message:
-          'Solicitud no encontrada para eliminar'
+          'Solicitud no encontrada para eliminar.'
       });
     }
 
     const esDuenio =
-      String(solicitudPrevia.usuario_id) ===
-      String(logueadoId);
+      String(
+        solicitudPrevia.usuario_id
+      ) ===
+      String(
+        logueadoId
+      );
 
-    if (!esAdmin && !esDuenio) {
+    if (
+      !esAdmin &&
+      !esDuenio
+    ) {
       return res.status(403).json({
-        status: 'error',
+        status:
+          'error',
         message:
-          'Acceso denegado: No tienes permisos para eliminar esta solicitud'
+          'Acceso denegado: no tienes permisos para eliminar esta solicitud.'
       });
     }
 
-    await Solicitud.delete(id);
+    // --------------------------------------------------------
+    // GUARDAR REFERENCIAS DE ARCHIVOS
+    // --------------------------------------------------------
+
+    const archivosPrivados =
+      await obtenerArchivosPrivadosSolicitud(
+        id
+      );
+
+    // --------------------------------------------------------
+    // ELIMINAR REGISTRO
+    // --------------------------------------------------------
+    //
+    // documentos_solicitud y asignacion_evaluaciones se eliminan
+    // mediante las restricciones ON DELETE CASCADE de la BD.
+    // --------------------------------------------------------
+
+    const affectedRows =
+      await Solicitud.delete(
+        id
+      );
+
+    if (
+      affectedRows === 0
+    ) {
+      return res.status(404).json({
+        status:
+          'error',
+        message:
+          'La solicitud no pudo ser eliminada.'
+      });
+    }
+
+    // --------------------------------------------------------
+    // LIMPIAR ARCHIVOS FÍSICOS
+    // --------------------------------------------------------
+
+    await eliminarArchivosPrivados(
+      archivosPrivados
+    );
 
     return res.status(200).json({
-      status: 'success',
-      message: 'Solicitud eliminada correctamente'
+      status:
+        'success',
+      message:
+        'Solicitud eliminada correctamente.'
     });
   } catch (error) {
-    console.error('Error en deleteSolicitud:', error);
+    console.error(
+      'Error en deleteSolicitud:',
+      error
+    );
 
     return res.status(500).json({
-      status: 'error',
-      message: 'Error al eliminar la solicitud'
+      status:
+        'error',
+      message:
+        'Error al eliminar la solicitud.'
     });
   }
 };

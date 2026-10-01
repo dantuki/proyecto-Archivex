@@ -1,21 +1,48 @@
 const express = require('express');
 
-const router = express.Router();
+const router =
+  express.Router();
 
-const reporteController = require('../controllers/reporteController');
-const verificarToken = require('../middleware/authMiddleware');
-const { requireRole } = require('../middleware/roleMiddleware');
+const reporteController =
+  require('../controllers/reporteController');
 
-/**
- * Todos los reportes contienen información institucional
- * y están destinados al módulo administrativo.
- *
- * GET:
- *   autenticación JWT
- *   + rol Admin
- */
-router.use(verificarToken);
-router.use(requireRole('Admin'));
+const verificarToken =
+  require('../middleware/authMiddleware');
+
+const {
+  requireRole
+} = require('../middleware/roleMiddleware');
+
+// ============================================================
+// PROTECCIÓN GENERAL
+// ============================================================
+//
+// Todos los reportes contienen información institucional y
+// están destinados al módulo administrativo.
+//
+// Requisitos:
+//
+// 1. JWT válido
+// 2. Rol Admin
+//
+// La autorización también se comprueba dentro del controller
+// como defensa en profundidad.
+// ============================================================
+
+router.use(
+  verificarToken
+);
+
+router.use(
+  requireRole(
+    'Admin',
+    'Administrador'
+  )
+);
+
+// ============================================================
+// REPORTES
+// ============================================================
 
 // Reporte general de convocatorias
 router.get(

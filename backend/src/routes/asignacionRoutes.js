@@ -21,6 +21,7 @@ const {
 // Todas las rutas de asignaciones requieren autenticación.
 //
 // No se permite:
+//
 // - consultar asignaciones sin sesión;
 // - crear asignaciones sin sesión;
 // - calificar sin sesión;
@@ -28,7 +29,7 @@ const {
 //
 // La autorización concreta por rol y ownership se aplica
 // posteriormente según cada operación.
-//
+// ============================================================
 
 router.use(verificarToken);
 
@@ -40,50 +41,95 @@ router.use(verificarToken);
 // Puede consultar todas.
 //
 // EVALUADOR:
-// Puede consultar sus propias asignaciones; el controller debe
-// validar que el evaluador solicitado coincida con req.user.id.
+// Puede consultar sus propias asignaciones.
 //
 // DOCENTE:
 // No recibe acceso administrativo a las asignaciones.
 // ============================================================
 
-// GET general
+// ------------------------------------------------------------
+// GET GENERAL
+// ------------------------------------------------------------
+//
+// Admin:
+//   puede consultar todas.
+//
+// Evaluador:
+//   obtiene únicamente sus propias asignaciones.
+//
+// El controller mantiene una segunda validación de ownership.
+//
+
 router.get(
   '/',
-  requireRole('Admin', 'Evaluador'),
+  requireRole(
+    'Admin',
+    'Administrador',
+    'Evaluador'
+  ),
   ctrl.getAsignaciones
 );
 
-// GET todas
+// ------------------------------------------------------------
+// GET TODAS
+// ------------------------------------------------------------
 //
-// Se conserva porque el frontend del Admin utiliza esta ruta.
-// Solo Admin debe poder utilizarla.
+// Se conserva por compatibilidad con el frontend.
+//
+// Solo Admin puede utilizar esta ruta.
+//
+
 router.get(
   '/todas',
-  requireRole('Admin'),
+  requireRole(
+    'Admin',
+    'Administrador'
+  ),
   ctrl.getAsignaciones
 );
 
-// GET por evaluador
+// ------------------------------------------------------------
+// GET POR EVALUADOR
+// ------------------------------------------------------------
 //
-// Admin puede consultar cualquier evaluador.
-// Evaluador solamente puede consultar sus propias asignaciones.
-// La validación de ownership debe permanecer también en el
-// controller y nunca depender únicamente del frontend.
+// Admin:
+//   puede consultar las asignaciones de cualquier evaluador.
+//
+// Evaluador:
+//   solamente puede consultar sus propias asignaciones.
+//
+// El controller debe comprobar nuevamente el ownership.
+//
+
 router.get(
   '/evaluador/:evaluadorId',
-  requireRole('Admin', 'Evaluador'),
+  requireRole(
+    'Admin',
+    'Administrador',
+    'Evaluador'
+  ),
   ctrl.getAsignacionesByEvaluador
 );
 
-// GET asignación específica
+// ------------------------------------------------------------
+// GET ASIGNACIÓN ESPECÍFICA
+// ------------------------------------------------------------
 //
-// Admin puede consultar cualquiera.
-// Evaluador debe quedar restringido a la asignación que realmente
-// le pertenece; esa comprobación corresponde al controller.
+// Admin:
+//   puede consultar cualquiera.
+//
+// Evaluador:
+//   solamente puede consultar una asignación cuyo
+//   evaluador_id coincida con su usuario autenticado.
+//
+
 router.get(
   '/:id',
-  requireRole('Admin', 'Evaluador'),
+  requireRole(
+    'Admin',
+    'Administrador',
+    'Evaluador'
+  ),
   ctrl.getAsignacionById
 );
 
@@ -95,11 +141,14 @@ router.get(
 //
 // No confiamos en que un Evaluador pueda crear una asignación
 // enviando un evaluadorId manipulado.
-//
+// ============================================================
 
 router.post(
   '/',
-  requireRole('Admin'),
+  requireRole(
+    'Admin',
+    'Administrador'
+  ),
   ctrl.asignarEvaluador
 );
 
@@ -108,6 +157,7 @@ router.post(
 // ============================================================
 //
 // Permitido para:
+//
 // - Admin
 // - Evaluador
 //
@@ -117,23 +167,27 @@ router.post(
 // Flujo:
 //
 // JWT
-//  ↓
+//   ↓
 // autorización por rol
-//  ↓
+//   ↓
 // Multer
-//  ↓
+//   ↓
 // validación de firma binaria
-//  ↓
+//   ↓
 // controller
 //
 // De esta forma un archivo cuyo MIME declarado sea PDF pero
 // cuyo contenido real no corresponda será rechazado antes
 // de llegar al controller.
-//
+// ============================================================
 
 router.put(
   '/:id/calificar',
-  requireRole('Admin', 'Evaluador'),
+  requireRole(
+    'Admin',
+    'Administrador',
+    'Evaluador'
+  ),
   upload.single('archivo_evaluacion'),
   validarFirmasPostSubida,
   ctrl.calificar
@@ -144,11 +198,14 @@ router.put(
 // ============================================================
 //
 // Solo Admin puede eliminar una asignación.
-//
+// ============================================================
 
 router.delete(
   '/:id',
-  requireRole('Admin'),
+  requireRole(
+    'Admin',
+    'Administrador'
+  ),
   ctrl.deleteAsignacion
 );
 
