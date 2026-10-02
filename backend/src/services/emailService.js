@@ -260,6 +260,37 @@ const sendEmailVerification = async ({ to, name, token }) => {
 
 const enviarCorreoVerificacion = sendEmailVerification;
 
+const sendDeviceVerificationEmail = async ({ to, name, token }) => {
+  if (typeof to !== 'string' || !to.trim() || typeof token !== 'string' || !token.trim()) {
+    throw new Error('El correo y token de seguridad son obligatorios.');
+  }
+
+  const transporter = crearTransporter();
+  const config = obtenerConfiguracionMail();
+  const confirmationUrl = `${obtenerFrontendOrigin()}/?device-token=${encodeURIComponent(token.trim())}`;
+  const nombreSeguro = escaparHtml(name || 'Usuario de ArchiveX');
+  return enviarCorreo({
+    transporter,
+    destinatario: to.trim(),
+    mail: {
+      from: config.from,
+      to: to.trim(),
+      subject: 'ArchiveX - Confirma un nuevo acceso',
+      text: `Hola ${name || 'usuario'}, se intentó acceder a tu cuenta desde un dispositivo o una red nuevos. Si fuiste tú, confirma el acceso en este enlace, válido por 15 minutos. Si no fuiste tú, ignora este correo y cambia tu contraseña.\n\n${confirmationUrl}`,
+      html: crearPlantillaCorreo({
+        titulo: 'Confirma este nuevo acceso',
+        saludo: `Hola <strong>${nombreSeguro}</strong>,`,
+        contenido: 'Se intentó iniciar sesión desde un dispositivo o una red que no habías utilizado antes.',
+        accionTexto: 'Confirmar dispositivo',
+        accionUrl: confirmationUrl,
+        aviso: 'El enlace es válido durante 15 minutos. Si no reconoces el intento, ignora el enlace y cambia tu contraseña.'
+      })
+    }
+  });
+};
+
+const enviarCorreoVerificacionDispositivo = sendDeviceVerificationEmail;
+
 const sendEmailChange = async ({ to, name, token }) => {
   if (typeof to !== 'string' || !to.trim() || typeof token !== 'string' || !token.trim()) {
     throw new Error('El correo y token de confirmación son obligatorios.');
@@ -334,6 +365,8 @@ module.exports = {
   enviarCorreoRecuperacion,
   sendEmailVerification,
   enviarCorreoVerificacion,
+  sendDeviceVerificationEmail,
+  enviarCorreoVerificacionDispositivo,
   sendEmailChange,
   sendAccountDeletionConfirmation,
   sendNotificationEmail

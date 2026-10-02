@@ -4,6 +4,12 @@ const path = require('path');
 const Convocatoria =
   require('../models/convocatoriaModel');
 
+const db =
+  require('../config/db');
+
+const { crearNotificacion } =
+  require('./settingsController');
+
 const {
   PUBLIC_DIR
 } = require('../config/uploadPaths');
@@ -734,6 +740,22 @@ const createConvocatoria = async (
         bases_url,
         plantillas_url
       });
+
+    try {
+      const [usuarios] = await db.query(
+        `SELECT id FROM usuarios WHERE account_status = 'active'`
+      );
+      await Promise.all(usuarios.map((usuario) => crearNotificacion({
+        usuarioId: usuario.id,
+        type: 'convocation',
+        title: 'Nueva convocatoria disponible',
+        body: `${validacion.datos.titulo} · cierre ${new Date(validacion.datos.fecha_cierre).toLocaleDateString('es-ES')}`,
+        link: '/convocatorias_abiertas',
+        eventKey: `convocation:${newId}`
+      })));
+    } catch (notificationError) {
+      console.error('No se pudo crear avisos de nueva convocatoria:', notificationError.code || 'error interno');
+    }
 
     return res.status(201).json({
       status:

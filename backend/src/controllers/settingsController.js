@@ -29,7 +29,7 @@ const obtenerPreferencias = async (req, res) => {
     const usuarioId = obtenerUsuarioId(req);
     const [rows] = await db.query(
             `SELECT theme, text_scale, email_notifications, deadline_notifications,
-              notify_comments, notify_assignments, notify_deadlines
+              notify_comments, notify_assignments, notify_deadlines, notify_convocations
        FROM user_preferences WHERE usuario_id = ? LIMIT 1`,
       [usuarioId]
     );
@@ -41,7 +41,8 @@ const obtenerPreferencias = async (req, res) => {
       deadline_notifications: true,
       notify_comments: true,
       notify_assignments: true,
-      notify_deadlines: true
+      notify_deadlines: true,
+      notify_convocations: true
     });
   } catch (error) {
     console.error('Error consultando preferencias:', error.code || error.message);
@@ -64,8 +65,8 @@ const actualizarPreferencias = async (req, res) => {
     await db.query(
       `INSERT INTO user_preferences
         (usuario_id, theme, text_scale, email_notifications, deadline_notifications,
-         notify_comments, notify_assignments, notify_deadlines)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         notify_comments, notify_assignments, notify_deadlines, notify_convocations)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
         theme = VALUES(theme),
         text_scale = VALUES(text_scale),
@@ -73,7 +74,8 @@ const actualizarPreferencias = async (req, res) => {
         deadline_notifications = VALUES(deadline_notifications),
         notify_comments = VALUES(notify_comments),
         notify_assignments = VALUES(notify_assignments),
-        notify_deadlines = VALUES(notify_deadlines)`,
+        notify_deadlines = VALUES(notify_deadlines),
+        notify_convocations = VALUES(notify_convocations)`,
       [
         usuarioId,
         theme,
@@ -82,7 +84,8 @@ const actualizarPreferencias = async (req, res) => {
         deadlineNotifications,
         Boolean(req.body?.notify_comments),
         Boolean(req.body?.notify_assignments),
-        Boolean(req.body?.notify_deadlines)
+        Boolean(req.body?.notify_deadlines),
+        Boolean(req.body?.notify_convocations)
       ]
     );
 
@@ -360,6 +363,25 @@ const listarBajasPendientes = async (req, res) => {
   }
 };
 
+const obtenerActividadAdmin = async (req, res) => {
+  if (!esAdmin(req)) return res.status(403).json({ error: 'Acceso denegado.' });
+  try {
+    const [rows] = await db.query(
+      `SELECT t.id, t.solicitud_id, t.estado_anterior, t.estado_nuevo,
+              t.motivo_cambio, t.fecha_cambio, s.titulo_propuesta,
+              u.nombre_completo AS responsable
+       FROM trazabilidad_solicitudes t
+       LEFT JOIN solicitudes s ON s.id = t.solicitud_id
+       LEFT JOIN usuarios u ON u.id = t.usuario_id
+       ORDER BY t.fecha_cambio DESC, t.id DESC LIMIT 30`
+    );
+    return res.json(rows);
+  } catch (error) {
+    console.error('Error consultando actividad administrativa:', error.code || 'error interno');
+    return res.status(500).json({ error: 'No fue posible consultar la actividad reciente.' });
+  }
+};
+
 const cancelarBajaPendiente = async (req, res) => {
   if (!esAdmin(req)) return res.status(403).json({ error: 'Acceso denegado.' });
   const id = Number(req.params.id);
@@ -605,6 +627,8 @@ const anonimizarCuentaVencidaPorId = async (id) => {
       [email, password, id]
     );
     await connection.query('DELETE FROM login_sessions WHERE usuario_id = ?', [id]);
+    await connection.query('DELETE FROM trusted_devices WHERE usuario_id = ?', [id]);
+    await connection.query('DELETE FROM login_device_tokens WHERE usuario_id = ?', [id]);
     await connection.query('DELETE FROM email_change_tokens WHERE usuario_id = ?', [id]);
     await connection.query('DELETE FROM account_deletion_tokens WHERE usuario_id = ?', [id]);
     await connection.query('DELETE FROM email_verification_tokens WHERE usuario_id = ?', [id]);
@@ -657,15 +681,23 @@ const crearNotificacion = async ({ usuarioId, type = 'general', title, body, lin
     `SELECT u.email, u.nombre_completo, COALESCE(p.email_notifications, TRUE) AS email_notifications,
        COALESCE(p.notify_comments, TRUE) AS notify_comments,
        COALESCE(p.notify_assignments, TRUE) AS notify_assignments,
-       COALESCE(p.notify_deadlines, TRUE) AS notify_deadlines
+        COALESCE(p.notify_deadlines, TRUE) AS notify_deadlines,
+        COALESCE(p.notify_convocations, TRUE) AS notify_convocations
      FROM usuarios u LEFT JOIN user_preferences p ON p.usuario_id = u.id
      WHERE u.id = ? AND u.account_status = 'active' LIMIT 1`,
     [usuarioId]
   );
   const user = rows[0];
   if (!user) return;
-  const preference = type === 'assignment' ? user.notify_assignments
-    : type === 'deadline' ? user.notify_deadlines : user.notify_comments;
+  const preferencesByType = {
+    assignment: user.notify_assignments,
+    deadline: user.notify_deadlines,
+    convocation: user.notify_convocations,
+    comment: user.notify_comments,
+    solicitud: user.notify_comments,
+    general: user.notify_comments
+  };
+  const preference = preferencesByType[type] ?? user.notify_comments;
   if (!preference) return;
   const [result] = await db.query(
     `INSERT IGNORE INTO notifications (usuario_id, type, title, body, link, event_key)
@@ -673,8 +705,7 @@ const crearNotificacion = async ({ usuarioId, type = 'general', title, body, lin
     [usuarioId, type, title, body, link, eventKey ? `${usuarioId}:${eventKey}` : null]
   );
   if (result.affectedRows && user.email_notifications) {
-    const categoryEnabled = type === 'deadline' ? user.notify_deadlines
-      : type === 'assignment' ? user.notify_assignments : user.notify_comments;
+    const categoryEnabled = preferencesByType[type] ?? user.notify_comments;
     if (categoryEnabled) {
       try {
         await sendNotificationEmail({ to: user.email, name: user.nombre_completo, title, body });
@@ -692,6 +723,7 @@ module.exports = {
   confirmarCambioEmail,
   exportarDatos,
   listarBajasPendientes,
+  obtenerActividadAdmin,
   cancelarBajaPendiente,
   anonimizarCuentaVencida,
   procesarBajasVencidas,

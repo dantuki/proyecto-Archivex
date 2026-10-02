@@ -10,6 +10,17 @@ const API_URL =
   import.meta.env.VITE_API_URL ||
   'http://localhost:5000/api';
 
+const obtenerIdDispositivo = () => {
+  let deviceId = localStorage.getItem('archivex-device-id');
+  if (deviceId) return deviceId;
+
+  const bytes = new Uint8Array(16);
+  window.crypto.getRandomValues(bytes);
+  deviceId = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  localStorage.setItem('archivex-device-id', deviceId);
+  return deviceId;
+};
+
 export default function AuthContainer({
   alAutenticar
 }) {
@@ -58,6 +69,7 @@ export default function AuthContainer({
     const verifyToken = currentUrl.searchParams.get('verify-token');
     const emailChangeToken = currentUrl.searchParams.get('email-change-token');
     const deletionToken = currentUrl.searchParams.get('delete-account-token');
+    const deviceToken = currentUrl.searchParams.get('device-token');
 
     if (resetToken) {
       setFlowToken(resetToken);
@@ -75,9 +87,13 @@ export default function AuthContainer({
       setFlowToken(deletionToken);
       setAuthFlow('confirm-deletion');
       currentUrl.searchParams.delete('delete-account-token');
+    } else if (deviceToken) {
+      setFlowToken(deviceToken);
+      setAuthFlow('verify-device');
+      currentUrl.searchParams.delete('device-token');
     }
 
-    if (resetToken || verifyToken || emailChangeToken || deletionToken) {
+    if (resetToken || verifyToken || emailChangeToken || deletionToken || deviceToken) {
       window.history.replaceState(
         {},
         document.title,
@@ -219,7 +235,8 @@ export default function AuthContainer({
                 JSON.stringify({
                   email,
                   password,
-                  captchaToken
+                  captchaToken,
+                  deviceId: obtenerIdDispositivo()
                 })
             }
           );
@@ -230,6 +247,15 @@ export default function AuthContainer({
           if (
             !response.ok
           ) {
+          if (data.code === 'DEVICE_VERIFICATION_REQUIRED') {
+            setError('');
+            setMensajeExito(data.error || 'Confirma este acceso desde el enlace enviado a tu correo.');
+            setAuthFlow('device-verification-sent');
+            if (recaptchaRef.current) recaptchaRef.current.reset();
+            setCaptchaToken(null);
+            return;
+          }
+
           setError(
             data.error ||
               'Error al iniciar sesión.'
@@ -246,7 +272,6 @@ export default function AuthContainer({
             if (data.code === 'EMAIL_NOT_VERIFIED') {
               setAuthFlow('resend-verification');
             }
-
           return;
         }
 
@@ -515,6 +540,25 @@ export default function AuthContainer({
     }
   };
 
+  const handleVerifyDevice = async () => {
+    setError('');
+    setMensajeExito('');
+    try {
+      const response = await fetch(`${API_URL}/auth/verify-device`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: flowToken })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'El enlace no es válido o expiró.');
+      setFlowToken('');
+      setAuthFlow('device-verified');
+      setMensajeExito(data.message);
+    } catch (requestError) {
+      setError(requestError.message || 'No se pudo verificar el dispositivo.');
+    }
+  };
+
   const handleConfirmAccountAction = async () => {
     setError('');
     setMensajeExito('');
@@ -741,6 +785,27 @@ export default function AuthContainer({
                 </>
               )}
 
+              {authFlow === 'device-verification-sent' && (
+                <>
+                  <div className="space-y-1.5">
+                    <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Confirma este dispositivo</h1>
+                    <p className="text-xs text-slate-500 leading-relaxed">Abre el enlace enviado a tu correo. El enlace vence en 15 minutos; después vuelve a iniciar sesión.</p>
+                  </div>
+                  <button type="button" onClick={() => volverAlLogin(true)} className="w-full text-xs font-semibold text-blue-600 hover:underline">Volver al inicio de sesión</button>
+                </>
+              )}
+
+              {authFlow === 'verify-device' && (
+                <>
+                  <div className="space-y-1.5">
+                    <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Verificar dispositivo</h1>
+                    <p className="text-xs text-slate-500 leading-relaxed">Confirma que reconoces este dispositivo o esta red para autorizar el inicio de sesión.</p>
+                  </div>
+                  <button type="button" onClick={handleVerifyDevice} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm rounded-xl">Confirmar dispositivo</button>
+                  <button type="button" onClick={() => volverAlLogin()} className="w-full text-xs font-semibold text-blue-600 hover:underline">Volver al inicio de sesión</button>
+                </>
+              )}
+
               {(authFlow === 'confirm-email-change' || authFlow === 'confirm-deletion') && (
                 <>
                   <div className="space-y-1.5">
@@ -759,16 +824,17 @@ export default function AuthContainer({
                 </>
               )}
 
-              {(authFlow === 'reset-success' || authFlow === 'verify-success' || authFlow === 'email-change-success' || authFlow === 'deletion-success') && (
+              {(authFlow === 'reset-success' || authFlow === 'verify-success' || authFlow === 'email-change-success' || authFlow === 'deletion-success' || authFlow === 'device-verified') && (
                 <>
                   <div className="space-y-1.5">
                     <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
                       {authFlow === 'reset-success' ? 'Contraseña actualizada'
                         : authFlow === 'verify-success' ? 'Correo verificado'
+                          : authFlow === 'device-verified' ? 'Dispositivo verificado'
                           : authFlow === 'email-change-success' ? 'Correo actualizado' : 'Solicitud confirmada'}
                     </h1>
                     <p className="text-xs text-slate-500 leading-relaxed">
-                      {authFlow === 'deletion-success' ? 'Se cerraron las sesiones de la cuenta; los expedientes institucionales se conservarán.' : 'Ya puedes volver al inicio de sesión.'}
+                      {authFlow === 'deletion-success' ? 'Se cerraron las sesiones de la cuenta; los expedientes institucionales se conservarán.' : authFlow === 'device-verified' ? 'El acceso fue autorizado. Vuelve al inicio de sesión para continuar.' : 'Ya puedes volver al inicio de sesión.'}
                     </p>
                   </div>
                   {authFlow !== 'deletion-success' && <button type="button" onClick={() => volverAlLogin(true)} className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm rounded-xl transition-all duration-150 shadow-sm">

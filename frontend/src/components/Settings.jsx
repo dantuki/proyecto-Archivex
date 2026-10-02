@@ -25,13 +25,15 @@ const tabs = [
 export default function Settings({ theme, onThemeChange, onTextScaleChange, onLogout, onNavigate, usuario }) {
   const [preferences, setPreferences] = useState({
     theme: theme || 'system', text_scale: 'normal', email_notifications: true,
-    deadline_notifications: true, notify_comments: true, notify_assignments: true, notify_deadlines: true
+    deadline_notifications: true, notify_comments: true, notify_assignments: true,
+    notify_deadlines: true, notify_convocations: true
   });
   const [sessions, setSessions] = useState([]);
   const [profile, setProfile] = useState(null);
   const [email, setEmail] = useState('');
   const [emailPassword, setEmailPassword] = useState('');
   const [pendingDeletions, setPendingDeletions] = useState([]);
+  const [adminActivity, setAdminActivity] = useState([]);
   const [activeTab, setActiveTab] = useState('profile');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -51,7 +53,11 @@ export default function Settings({ theme, onThemeChange, onTextScaleChange, onLo
       onThemeChange(savedPreferences.theme);
       onTextScaleChange(savedPreferences.text_scale || 'normal');
       if (['admin', 'administrador'].includes(String(usuario?.rol || '').trim().toLowerCase())) {
-        setPendingDeletions(await request('/admin/pending-deletions'));
+        const [deletions, activity] = await Promise.all([
+          request('/admin/pending-deletions'), request('/admin/activity')
+        ]);
+        setPendingDeletions(deletions);
+        setAdminActivity(activity);
       }
     } catch (loadError) {
       setError(loadError.message);
@@ -253,17 +259,28 @@ export default function Settings({ theme, onThemeChange, onTextScaleChange, onLo
             <button className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-bold">Solicitar eliminación</button>
           </form>
           {['admin', 'administrador'].includes(String(usuario?.rol || '').trim().toLowerCase()) && (
-            <section className="bg-white rounded-2xl p-6 border border-slate-100 space-y-3">
-              <h3 className="font-bold text-slate-900">Cuentas pendientes de eliminación</h3>
-              {pendingDeletions.map((item) => <div key={item.id} className="flex flex-wrap justify-between gap-2 border-t border-slate-100 pt-3 text-sm">
-                <span>{item.nombre_completo} · {item.email} · {new Date(item.deletion_scheduled_at).toLocaleDateString()}</span>
-                <div className="flex gap-3">
-                  <button type="button" onClick={() => cancelDeletion(item.id)} className="text-blue-700 font-semibold">Cancelar solicitud</button>
-                  {new Date(item.deletion_scheduled_at) <= new Date() && <button type="button" onClick={() => anonymizeDeletion(item.id)} className="text-red-700 font-semibold">Anonimizar expediente de cuenta</button>}
-                </div>
-              </div>)}
-              {!pendingDeletions.length && <p className="text-sm text-slate-500">No hay solicitudes pendientes.</p>}
-            </section>
+            <>
+              <section className="bg-white rounded-2xl p-6 border border-slate-100 space-y-3">
+                <h3 className="font-bold text-slate-900">Cuentas pendientes de eliminación</h3>
+                {pendingDeletions.map((item) => <div key={item.id} className="flex flex-wrap justify-between gap-2 border-t border-slate-100 pt-3 text-sm">
+                  <span>{item.nombre_completo} · {item.email} · {new Date(item.deletion_scheduled_at).toLocaleDateString()}</span>
+                  <div className="flex gap-3">
+                    <button type="button" onClick={() => cancelDeletion(item.id)} className="text-blue-700 font-semibold">Cancelar solicitud</button>
+                    {new Date(item.deletion_scheduled_at) <= new Date() && <button type="button" onClick={() => anonymizeDeletion(item.id)} className="text-red-700 font-semibold">Anonimizar expediente de cuenta</button>}
+                  </div>
+                </div>)}
+                {!pendingDeletions.length && <p className="text-sm text-slate-500">No hay solicitudes pendientes.</p>}
+              </section>
+              <section className="bg-white rounded-2xl p-6 border border-slate-100 space-y-3">
+                <h3 className="font-bold text-slate-900">Actividad reciente</h3>
+                {adminActivity.map((item) => <div key={item.id} className="border-t border-slate-100 pt-3 text-sm">
+                  <p className="font-semibold text-slate-800">{item.titulo_propuesta || `Solicitud #${item.solicitud_id}`} · {item.estado_nuevo}</p>
+                  <p className="text-xs text-slate-500">{item.responsable || 'Sistema'} · {new Date(item.fecha_cambio).toLocaleString()}</p>
+                  {item.motivo_cambio && <p className="mt-1 text-xs text-slate-600">{item.motivo_cambio}</p>}
+                </div>)}
+                {!adminActivity.length && <p className="text-sm text-slate-500">No hay movimientos recientes.</p>}
+              </section>
+            </>
           )}
         </div>
       )}
@@ -274,7 +291,8 @@ export default function Settings({ theme, onThemeChange, onTextScaleChange, onLo
           {[
             ['notify_comments', 'Comentarios y cambios de estado'],
             ['notify_assignments', 'Evaluaciones asignadas'],
-            ['notify_deadlines', 'Convocatorias próximas a cerrar']
+            ['notify_deadlines', 'Convocatorias próximas a cerrar'],
+            ['notify_convocations', 'Nuevas convocatorias disponibles']
           ].map(([key, label]) => <label key={key} className="flex gap-3 items-center text-sm text-slate-700 cursor-pointer">
             <input type="checkbox" checked={Boolean(preferences[key])} onChange={(e) => setPreferences({ ...preferences, [key]: e.target.checked })} />{label}
           </label>)}

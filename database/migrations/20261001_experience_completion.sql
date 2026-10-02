@@ -1,22 +1,22 @@
 ALTER TABLE user_preferences
-  ADD COLUMN IF NOT EXISTS text_scale ENUM('compact', 'normal') NOT NULL DEFAULT 'normal',
-  ADD COLUMN IF NOT EXISTS notify_comments BOOLEAN NOT NULL DEFAULT TRUE,
-  ADD COLUMN IF NOT EXISTS notify_assignments BOOLEAN NOT NULL DEFAULT TRUE,
-  ADD COLUMN IF NOT EXISTS notify_deadlines BOOLEAN NOT NULL DEFAULT TRUE;
+  ADD COLUMN text_scale ENUM('compact', 'normal') NOT NULL DEFAULT 'normal',
+  ADD COLUMN notify_comments BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN notify_assignments BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN notify_deadlines BOOLEAN NOT NULL DEFAULT TRUE;
 
 ALTER TABLE notifications
-  ADD COLUMN IF NOT EXISTS event_key VARCHAR(191) NULL;
+  ADD COLUMN event_key VARCHAR(191) NULL;
 
 ALTER TABLE notifications
   ADD UNIQUE INDEX uq_notifications_event_key (event_key);
 
 ALTER TABLE documentos_solicitud
-  ADD COLUMN IF NOT EXISTS review_status ENUM('pending', 'validated', 'rejected', 'replaced') NOT NULL DEFAULT 'pending',
-  ADD COLUMN IF NOT EXISTS review_comment TEXT NULL,
-  ADD COLUMN IF NOT EXISTS reviewed_by INT NULL,
-  ADD COLUMN IF NOT EXISTS reviewed_at DATETIME NULL,
-  ADD COLUMN IF NOT EXISTS version_no INT NOT NULL DEFAULT 1,
-  ADD COLUMN IF NOT EXISTS replaced_by INT NULL;
+  ADD COLUMN review_status ENUM('pending', 'validated', 'rejected', 'replaced') NOT NULL DEFAULT 'pending',
+  ADD COLUMN review_comment TEXT NULL,
+  ADD COLUMN reviewed_by INT NULL,
+  ADD COLUMN reviewed_at DATETIME NULL,
+  ADD COLUMN version_no INT NOT NULL DEFAULT 1,
+  ADD COLUMN replaced_by INT NULL;
 
 ALTER TABLE documentos_solicitud
   ADD INDEX idx_documentos_solicitud_tipo_version (solicitud_id, tipo_documento, version_no);
@@ -91,4 +91,40 @@ CREATE TABLE IF NOT EXISTS document_comments (
   CONSTRAINT fk_document_comments_usuario FOREIGN KEY (usuario_id)
     REFERENCES usuarios(id) ON DELETE RESTRICT ON UPDATE CASCADE,
   INDEX idx_document_comments_documento (documento_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+ALTER TABLE user_preferences
+  ADD COLUMN notify_convocations BOOLEAN NOT NULL DEFAULT TRUE;
+
+ALTER TABLE login_sessions
+  ADD COLUMN device_hash CHAR(64) NULL;
+
+CREATE TABLE IF NOT EXISTS trusted_devices (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  usuario_id INT NOT NULL,
+  device_hash CHAR(64) NOT NULL,
+  ip_address VARCHAR(64) NOT NULL,
+  user_agent VARCHAR(500) NULL,
+  trusted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uq_trusted_device_ip UNIQUE (usuario_id, device_hash, ip_address),
+  CONSTRAINT fk_trusted_device_user FOREIGN KEY (usuario_id)
+    REFERENCES usuarios(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  INDEX idx_trusted_devices_user (usuario_id, device_hash)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS login_device_tokens (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  usuario_id INT NOT NULL,
+  device_hash CHAR(64) NOT NULL,
+  ip_address VARCHAR(64) NOT NULL,
+  user_agent VARCHAR(500) NULL,
+  token_hash CHAR(64) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  used_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uq_login_device_token UNIQUE (token_hash),
+  CONSTRAINT fk_login_device_user FOREIGN KEY (usuario_id)
+    REFERENCES usuarios(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  INDEX idx_login_device_tokens_user (usuario_id, device_hash, used_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

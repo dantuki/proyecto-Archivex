@@ -17,7 +17,8 @@ const {
 
 const {
   enviarCorreoRecuperacion,
-  enviarCorreoVerificacion
+  enviarCorreoVerificacion,
+  enviarCorreoVerificacionDispositivo
 } =
   require('../services/emailService');
 
@@ -60,6 +61,9 @@ const EMAIL_VERIFICATION_TOKEN_BYTES =
 
 const EMAIL_VERIFICATION_EXPIRATION_HOURS =
   24;
+
+const DEVICE_VERIFICATION_EXPIRATION_MINUTES =
+  15;
 
 // ============================================================
 // OBTENER SECRET JWT
@@ -1064,6 +1068,77 @@ const login =
         });
       }
 
+      const deviceId = String(req.body?.deviceId || '').trim();
+      if (!/^[A-Za-z0-9-]{16,80}$/.test(deviceId)) {
+        return res.status(400).json({
+          error: 'No se pudo identificar este dispositivo. Recarga la página e intenta nuevamente.'
+        });
+      }
+
+      const deviceHash = hashToken(deviceId);
+      const deviceIp = String(req.ip || req.socket?.remoteAddress || 'unknown').slice(0, 64);
+      const deviceUserAgent = String(req.get('user-agent') || '').slice(0, 500) || null;
+      const [trustedDevices] = await pool.query(
+        `SELECT id FROM trusted_devices
+         WHERE usuario_id = ? AND device_hash = ? AND ip_address = ? LIMIT 1`,
+        [user.id, deviceHash, deviceIp]
+      );
+
+      if (!trustedDevices.length) {
+        const deviceToken = crypto.randomBytes(32).toString('hex');
+        const deviceTokenHash = hashToken(deviceToken);
+        const deviceTokenExpiresAt = new Date(
+          Date.now() + DEVICE_VERIFICATION_EXPIRATION_MINUTES * 60 * 1000
+        );
+        await pool.query(
+          `UPDATE login_device_tokens SET used_at = CURRENT_TIMESTAMP
+           WHERE usuario_id = ? AND device_hash = ? AND used_at IS NULL`,
+          [user.id, deviceHash]
+        );
+        await pool.query(
+          `INSERT INTO login_device_tokens
+           (usuario_id, device_hash, ip_address, user_agent, token_hash, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            user.id,
+            deviceHash,
+            deviceIp,
+            deviceUserAgent,
+            deviceTokenHash,
+            deviceTokenExpiresAt
+          ]
+        );
+
+        try {
+          await enviarCorreoVerificacionDispositivo({
+            to: emailUsuario,
+            name: user.nombre_completo,
+            token: deviceToken
+          });
+        } catch (emailError) {
+          await pool.query(
+            `UPDATE login_device_tokens SET used_at = CURRENT_TIMESTAMP
+             WHERE token_hash = ? AND used_at IS NULL`,
+            [deviceTokenHash]
+          );
+          console.error('No se pudo enviar confirmación de nuevo dispositivo:', emailError.code || 'fallo de entrega');
+          return res.status(503).json({
+            code: 'DEVICE_VERIFICATION_REQUIRED',
+            error: 'No se pudo enviar el enlace de seguridad. Intenta iniciar sesión nuevamente más tarde.'
+          });
+        }
+
+        return res.status(403).json({
+          code: 'DEVICE_VERIFICATION_REQUIRED',
+          error: 'Enviamos un enlace de seguridad a tu correo. Confirma este dispositivo y vuelve a iniciar sesión.'
+        });
+      }
+
+      await pool.query(
+        'UPDATE trusted_devices SET last_seen_at = CURRENT_TIMESTAMP, user_agent = ? WHERE id = ?',
+        [deviceUserAgent, trustedDevices[0].id]
+      );
+
       // ------------------------------------------------------
       // GENERAR JWT
       // ------------------------------------------------------
@@ -1101,14 +1176,15 @@ const login =
       await pool.query(
         `
           INSERT INTO login_sessions
-          (id, usuario_id, ip_address, user_agent, expires_at)
-          VALUES (?, ?, ?, ?, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 24 HOUR))
+          (id, usuario_id, ip_address, user_agent, device_hash, expires_at)
+          VALUES (?, ?, ?, ?, ?, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 24 HOUR))
         `,
         [
           sessionId,
           user.id,
-          String(req.socket?.remoteAddress || '').slice(0, 64) || null,
-          String(req.get('user-agent') || '').slice(0, 500) || null
+          deviceIp,
+          deviceUserAgent,
+          deviceHash
         ]
       );
 
@@ -1847,11 +1923,56 @@ const resendEmailVerification = async (req, res) => {
   }
 };
 
+const verifyDevice = async (req, res) => {
+  let connection;
+  try {
+    const token = String(req.body?.token || '').trim();
+    if (!token) {
+      return res.status(400).json({ error: 'El token de seguridad es obligatorio.' });
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    const [rows] = await connection.query(
+      `SELECT id, usuario_id, device_hash, ip_address, user_agent, expires_at, used_at
+       FROM login_device_tokens WHERE token_hash = ? LIMIT 1 FOR UPDATE`,
+      [hashToken(token)]
+    );
+    const verification = rows[0];
+    if (!verification || verification.used_at || new Date(verification.expires_at) <= new Date()) {
+      await connection.rollback();
+      return res.status(400).json({ error: 'El enlace no es válido o ha expirado.' });
+    }
+
+    await connection.query(
+      `INSERT INTO trusted_devices (usuario_id, device_hash, ip_address, user_agent)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE user_agent = VALUES(user_agent),
+       trusted_at = CURRENT_TIMESTAMP, last_seen_at = CURRENT_TIMESTAMP`,
+      [verification.usuario_id, verification.device_hash, verification.ip_address, verification.user_agent]
+    );
+    await connection.query(
+      `UPDATE login_device_tokens SET used_at = CURRENT_TIMESTAMP
+       WHERE usuario_id = ? AND device_hash = ? AND used_at IS NULL`,
+      [verification.usuario_id, verification.device_hash]
+    );
+    await connection.commit();
+    return res.json({ message: 'Dispositivo verificado. Vuelve al inicio de sesión para continuar.' });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error('Error verificando dispositivo:', error.code || 'error interno');
+    return res.status(500).json({ error: 'No fue posible verificar el dispositivo.' });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
 module.exports = {
   register,
   login,
   forgotPassword,
   resetPassword,
   verifyEmail,
-  resendEmailVerification
+  resendEmailVerification,
+  verifyDevice
 };

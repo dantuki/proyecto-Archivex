@@ -42,6 +42,6 @@ CREATE TABLE IF NOT EXISTS login_sessions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 ALTER TABLE usuarios
-  ADD COLUMN IF NOT EXISTS account_status ENUM('active', 'pending_deletion', 'disabled') NOT NULL DEFAULT 'active',
-  ADD COLUMN IF NOT EXISTS deletion_requested_at DATETIME NULL,
-  ADD COLUMN IF NOT EXISTS deletion_scheduled_at DATETIME NULL;
+  ADD COLUMN account_status ENUM('active', 'pending_deletion', 'disabled') NOT NULL DEFAULT 'active',
+  ADD COLUMN deletion_requested_at DATETIME NULL,
+  ADD COLUMN deletion_scheduled_at DATETIME NULL;

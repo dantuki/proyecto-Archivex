@@ -218,6 +218,12 @@ router.post(
 );
 
 router.post(
+  '/verify-device',
+  emailVerificationLimiter,
+  authController.verifyDevice
+);
+
+router.post(
   '/resend-verification',
   passwordResetRequestLimiter,
   authController.resendEmailVerification

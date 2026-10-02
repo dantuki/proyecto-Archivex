@@ -33,6 +33,7 @@ router.put('/password', ctrl.cambiarContrasena);
 router.post('/account/deletion-request', securityEmailLimiter, ctrl.solicitarEliminacion);
 router.get('/privacy/export', ctrl.exportarDatos);
 router.get('/admin/pending-deletions', requireRole('Admin', 'Administrador'), ctrl.listarBajasPendientes);
+router.get('/admin/activity', requireRole('Admin', 'Administrador'), ctrl.obtenerActividadAdmin);
 router.delete('/admin/pending-deletions/:id', requireRole('Admin', 'Administrador'), ctrl.cancelarBajaPendiente);
 router.post('/admin/pending-deletions/:id/anonymize', requireRole('Admin', 'Administrador'), ctrl.anonimizarCuentaVencida);
 
