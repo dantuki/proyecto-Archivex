@@ -1,6 +1,9 @@
 const jwt =
   require('jsonwebtoken');
 
+const db =
+  require('../config/db');
+
 const {
   ADMIN_EMAIL
 } =
@@ -48,7 +51,7 @@ const JWT_ALGORITHMS = [
 //
 // ============================================================
 
-const verificarToken = (
+const verificarToken = async (
   req,
   res,
   next
@@ -225,6 +228,33 @@ const verificarToken = (
         message:
           'La cuenta administrativa no está autorizada.'
       });
+    }
+
+    if (typeof verified.sid === 'string' && verified.sid) {
+      const [sessions] = await db.query(
+        `
+          SELECT id
+          FROM login_sessions
+          WHERE id = ?
+            AND usuario_id = ?
+            AND revoked_at IS NULL
+            AND expires_at > CURRENT_TIMESTAMP
+          LIMIT 1
+        `,
+        [verified.sid, usuarioIdNumerico]
+      );
+
+      if (sessions.length === 0) {
+        return res.status(401).json({
+          status: 'error',
+          message: 'Esta sesión fue cerrada o expiró.'
+        });
+      }
+
+      await db.query(
+        'UPDATE login_sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [verified.sid]
+      );
     }
 
     req.user = {

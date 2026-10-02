@@ -34,6 +34,9 @@ const asignacionRoutes =
 const authRoutes =
   require('./routes/authRoutes');
 
+const settingsRoutes =
+  require('./routes/settingsRoutes');
+
 const noticiaRoutes =
   require('./routes/noticiaRoutes');
 
@@ -351,6 +354,11 @@ app.use(
 app.use(
   '/api/auth',
   authRoutes
+);
+
+app.use(
+  '/api/settings',
+  settingsRoutes
 );
 
 app.use(

@@ -961,7 +961,8 @@ const login =
               nombre_completo,
               email,
               rol,
-              correo_verificado
+              correo_verificado,
+              account_status
             FROM usuarios
             WHERE id = ?
             LIMIT 1
@@ -1057,9 +1058,18 @@ const login =
         });
       }
 
+      if (user.account_status && user.account_status !== 'active') {
+        return res.status(403).json({
+          error: 'Esta cuenta está desactivada o tiene una eliminación programada.'
+        });
+      }
+
       // ------------------------------------------------------
       // GENERAR JWT
       // ------------------------------------------------------
+
+      const sessionId =
+        crypto.randomUUID();
 
       const token =
         jwt.sign(
@@ -1071,7 +1081,10 @@ const login =
               emailUsuario,
 
             rol:
-              rolUsuario
+              rolUsuario,
+
+            sid:
+              sessionId
           },
 
           jwtSecret,
@@ -1084,6 +1097,20 @@ const login =
               JWT_ALGORITHM
           }
         );
+
+      await pool.query(
+        `
+          INSERT INTO login_sessions
+          (id, usuario_id, ip_address, user_agent, expires_at)
+          VALUES (?, ?, ?, ?, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 24 HOUR))
+        `,
+        [
+          sessionId,
+          user.id,
+          String(req.socket?.remoteAddress || '').slice(0, 64) || null,
+          String(req.get('user-agent') || '').slice(0, 500) || null
+        ]
+      );
 
       return res.status(200).json({
         message:

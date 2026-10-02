@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useState
 } from 'react';
 
@@ -29,6 +30,10 @@ import Chat from './components/Chat';
 import ControlUsuarios from './components/ControlUsuarios.jsx';
 
 import ReportesAdmin from './components/ReportesAdmin';
+
+import Settings from './components/Settings';
+
+import NotificationBell from './components/NotificationBell';
 
 // ============================================================
 // CONFIGURACIÓN DE SEGURIDAD DEL FRONTEND
@@ -81,6 +86,25 @@ function App() {
     setConvocatoriaSeleccionada
   ] =
     useState(null);
+
+  const [
+    theme,
+    setTheme
+  ] = useState(
+    () => localStorage.getItem('archivex-theme') || 'system'
+  );
+
+  const aplicarTema = (nuevoTema) => {
+    const darkSystem = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const dark = nuevoTema === 'dark' || (nuevoTema === 'system' && darkSystem);
+    document.documentElement.classList.toggle('dark', dark);
+    localStorage.setItem('archivex-theme', nuevoTema);
+    setTheme(nuevoTema);
+  };
+
+  useEffect(() => {
+    aplicarTema(theme);
+  }, []);
 
   // ==========================================================
   // ROL DEL USUARIO
@@ -415,6 +439,15 @@ function App() {
             <ReportesAdmin />
           );
 
+        case 'configuracion':
+          return (
+            <Settings
+              theme={theme}
+              onThemeChange={aplicarTema}
+              onLogout={handleLogout}
+            />
+          );
+
         default:
           return (
             <div className="bg-white p-8 rounded-2xl shadow-sm text-center max-w-md mx-auto mt-10">
@@ -649,6 +682,16 @@ function App() {
 
         </nav>
 
+        <div className="p-4 border-t border-white/10">
+          <button
+            onClick={() => cambiarVistaLimpia('configuracion')}
+            className="w-full text-left px-4 py-3 rounded-xl hover:bg-[#5B9BD5] transition-colors flex items-center gap-3"
+          >
+            <span>⚙️</span>
+            Configuración
+          </button>
+        </div>
+
       </aside>
 
       {/* =======================================================
@@ -686,6 +729,16 @@ function App() {
           </div>
 
           <div className="flex items-center gap-3">
+
+            <button
+              onClick={() => aplicarTema(theme === 'dark' ? 'light' : 'dark')}
+              className="p-2 rounded-xl hover:bg-slate-100 text-sm"
+              title="Cambiar tema"
+            >
+              {theme === 'dark' ? '☀️' : '🌙'}
+            </button>
+
+            <NotificationBell onNavigate={cambiarVistaLimpia} />
 
             {esAdmin && (
               <span className="text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 rounded-full bg-red-50 text-red-700 border border-red-100">

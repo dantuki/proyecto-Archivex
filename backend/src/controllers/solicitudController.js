@@ -4,6 +4,11 @@ const Solicitud =
 const Trazabilidad =
   require('../models/trazabilidadModel');
 
+const {
+  crearNotificacion
+} =
+  require('./settingsController');
+
 const db =
   require('../config/db');
 
@@ -1963,6 +1968,14 @@ const updateSolicitud = async (
         motivo_cambio:
           motivo_cambio ||
           'Actualización administrativa del estado de la solicitud.'
+      });
+
+      await crearNotificacion({
+        usuarioId: solicitudPrevia.usuario_id,
+        type: 'solicitud',
+        title: 'Tu solicitud cambió de estado',
+        body: `La solicitud "${solicitudPrevia.titulo_propuesta}" ahora está: ${estado}.`,
+        link: '/mis-solicitudes'
       });
     }
 
