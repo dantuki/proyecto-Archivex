@@ -48,6 +48,74 @@ const redactarSecretos = (valor) => {
   return texto;
 };
 
+// ============================================================
+// PLANTILLA VISUAL DE ARCHIVEX
+// ============================================================
+//
+// Se usan estilos inline para que Gmail, Outlook y correos
+// institucionales conserven el diseño sin depender de CSS externo.
+// ============================================================
+
+const crearPlantillaCorreo = ({
+  titulo,
+  saludo,
+  contenido,
+  accionTexto,
+  accionUrl,
+  aviso
+}) => `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${titulo} · ArchiveX</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f8fc;font-family:Arial,Helvetica,sans-serif;color:#14213d;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f4f8fc;">
+    <tr>
+      <td align="center" style="padding:36px 16px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;background:#ffffff;border:1px solid #dce7f3;border-radius:20px;overflow:hidden;">
+          <tr>
+            <td style="padding:28px 32px;background:linear-gradient(135deg,#0b7de3 0%,#00b894 100%);">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="width:42px;height:42px;border-radius:12px;background:#ffffff;color:#087fe0;text-align:center;font-size:24px;font-weight:800;line-height:42px;">A</td>
+                  <td style="padding-left:12px;color:#ffffff;">
+                    <div style="font-size:20px;font-weight:800;letter-spacing:-0.4px;">ARCHIVE<span style="color:#d5fff5;">X</span></div>
+                    <div style="font-size:10px;font-weight:700;letter-spacing:1.2px;opacity:0.9;margin-top:3px;">GESTIÓN DE ARCHIVOS</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:34px 32px 18px;">
+              <div style="display:inline-block;padding:6px 10px;background:#e8f8f3;border-radius:999px;color:#008a70;font-size:11px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;">Seguridad de tu cuenta</div>
+              <h1 style="margin:18px 0 12px;font-size:26px;line-height:1.25;color:#14213d;">${titulo}</h1>
+              <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:#4d6480;">${saludo}</p>
+              <p style="margin:0;font-size:15px;line-height:1.65;color:#4d6480;">${contenido}</p>
+              <div style="padding:28px 0 22px;text-align:center;">
+                <a href="${accionUrl}" style="display:inline-block;padding:14px 24px;border-radius:10px;background:#087fe0;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;box-shadow:0 5px 12px rgba(8,127,224,0.20);">${accionTexto}</a>
+              </div>
+              <div style="padding:15px 16px;background:#f3f8fc;border-left:4px solid #00b894;border-radius:8px;font-size:12px;line-height:1.55;color:#5d7188;">${aviso}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:18px 32px 28px;text-align:center;color:#8394a8;font-size:11px;line-height:1.55;">
+              Si el botón no funciona, copia y pega este enlace en tu navegador:<br>
+              <a href="${accionUrl}" style="color:#087fe0;word-break:break-all;">${accionUrl}</a>
+            </td>
+          </tr>
+        </table>
+        <p style="margin:16px 0 0;color:#8fa0b4;font-size:11px;">© ${new Date().getFullYear()} ArchiveX · Gestión de archivos</p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`.trim();
+
 const enviarCorreo = async ({ transporter, mail, destinatario }) => {
   const enDesarrollo = process.env.NODE_ENV === 'development';
 
@@ -131,57 +199,14 @@ Por seguridad, nunca compartas este enlace con otras personas.
 Equipo de ArchiveX
 `.trim();
 
-  const html = `
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <title>Recuperación de contraseña - ArchiveX</title>
-</head>
-<body style="margin:0;padding:0;background:#f8fafc;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
-  <div style="max-width:620px;margin:0 auto;padding:40px 20px;">
-    <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:18px;padding:32px;">
-      <div style="text-align:center;margin-bottom:28px;">
-        <div style="display:inline-block;padding:10px 18px;border-radius:12px;background:#0f172a;color:#ffffff;font-size:22px;font-weight:700;">
-          Archive<span style="color:#10b981;">X</span>
-        </div>
-      </div>
-      <h1 style="font-size:24px;line-height:1.3;margin:0 0 16px;">
-        Recuperación de contraseña
-      </h1>
-      <p style="font-size:15px;line-height:1.6;color:#475569;">
-        Hola <strong>${nombreSeguro}</strong>,
-      </p>
-      <p style="font-size:15px;line-height:1.6;color:#475569;">
-        Recibimos una solicitud para restablecer la contraseña de tu cuenta de ArchiveX.
-      </p>
-      <div style="text-align:center;margin:30px 0;">
-        <a
-          href="${resetUrl}"
-          style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:14px 24px;border-radius:10px;font-size:14px;font-weight:700;"
-        >
-          Restablecer contraseña
-        </a>
-      </div>
-      <p style="font-size:13px;line-height:1.6;color:#64748b;">
-        Este enlace es temporal y dejará de funcionar después del tiempo de expiración establecido.
-      </p>
-      <p style="font-size:13px;line-height:1.6;color:#64748b;">
-        Si tú no realizaste esta solicitud, puedes ignorar este mensaje.
-      </p>
-      <div style="margin-top:28px;padding-top:20px;border-top:1px solid #e2e8f0;">
-        <p style="font-size:12px;line-height:1.5;color:#94a3b8;margin:0;">
-          Por seguridad, nunca compartas este enlace de recuperación.
-        </p>
-      </div>
-    </div>
-    <p style="text-align:center;font-size:11px;color:#94a3b8;margin-top:20px;">
-      Equipo de ArchiveX
-    </p>
-  </div>
-</body>
-</html>
-`.trim();
+  const html = crearPlantillaCorreo({
+    titulo: 'Recupera tu contraseña',
+    saludo: `Hola <strong>${nombreSeguro}</strong>,`,
+    contenido: 'Recibimos una solicitud para crear una nueva contraseña para tu cuenta de ArchiveX.',
+    accionTexto: 'Restablecer contraseña',
+    accionUrl: resetUrl,
+    aviso: 'Este enlace es temporal y solo puede utilizarse una vez. Si no solicitaste este cambio, puedes ignorar este correo.'
+  });
 
   return enviarCorreo({
     transporter,
@@ -221,21 +246,14 @@ const sendEmailVerification = async ({ to, name, token }) => {
       to: to.trim(),
       subject: 'ArchiveX - Verifica tu correo electrónico',
       text: `Hola ${name || 'usuario'},\n\nConfirma tu correo electrónico para activar tu cuenta de ArchiveX:\n\n${verificationUrl}\n\nEste enlace expira en 24 horas. Si no creaste esta cuenta, puedes ignorar este mensaje.`,
-      html: `
-      <!DOCTYPE html>
-      <html lang="es">
-      <head><meta charset="UTF-8"><title>Verificación de correo - ArchiveX</title></head>
-      <body style="margin:0;padding:32px;background:#f8fafc;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
-        <main style="max-width:560px;margin:0 auto;padding:28px;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;">
-          <h1 style="font-size:22px;">Verifica tu correo electrónico</h1>
-          <p>Hola <strong>${nombreSeguro}</strong>,</p>
-          <p>Confirma tu correo para activar tu cuenta de ArchiveX.</p>
-          <p><a href="${verificationUrl}" style="display:inline-block;padding:12px 20px;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:700;">Verificar correo</a></p>
-          <p style="font-size:13px;color:#64748b;">Este enlace expira en 24 horas. Si no creaste esta cuenta, ignora este mensaje.</p>
-        </main>
-      </body>
-      </html>
-      `.trim()
+      html: crearPlantillaCorreo({
+        titulo: 'Verifica tu correo',
+        saludo: `Hola <strong>${nombreSeguro}</strong>,`,
+        contenido: 'Confirma que esta dirección te pertenece para activar tu cuenta de ArchiveX.',
+        accionTexto: 'Verificar mi correo',
+        accionUrl: verificationUrl,
+        aviso: 'Este enlace expira en 24 horas. Si no creaste esta cuenta, puedes ignorar este correo sin realizar ninguna acción.'
+      })
     }
   });
 };

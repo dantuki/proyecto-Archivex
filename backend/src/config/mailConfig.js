@@ -53,8 +53,16 @@ const obtenerConfiguracionMail =
     const password =
       process.env.MAIL_PASSWORD;
 
+    const fromRaw =
+      process.env.MAIL_FROM ||
+      user ||
+      '';
+
     const from =
-      process.env.MAIL_FROM;
+      typeof fromRaw === 'string' && fromRaw.trim() &&
+      !fromRaw.includes('<')
+        ? `ArchiveX <${fromRaw.trim()}>`
+        : fromRaw;
 
     if (
       typeof host !==
