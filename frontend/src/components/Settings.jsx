@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useEffectEvent, useState } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -64,7 +64,14 @@ export default function Settings({ theme, onThemeChange, onTextScaleChange, onLo
     }
   };
 
-  useEffect(() => { load(); }, []);
+  const cargarSettings = useEffectEvent(() => {
+    void load();
+  });
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => cargarSettings(), 0);
+    return () => window.clearTimeout(timeout);
+  }, []);
 
   const savePreferences = async (event) => {
     event.preventDefault();

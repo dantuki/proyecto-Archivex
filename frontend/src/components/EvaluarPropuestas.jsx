@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useEffectEvent } from 'react';
 
 const API_BASE =
   'http://localhost:5000/api';
@@ -208,15 +208,6 @@ const EvaluarPropuestas = ({
   const [borradoresComentario, setBorradoresComentario] = useState({});
   const [errorComentario, setErrorComentario] = useState('');
 
-  useEffect(
-    () => {
-      if (usuario?.id) {
-        obtenerAsignaciones();
-      }
-    },
-    [usuario]
-  );
-
   const obtenerAsignaciones =
     async () => {
       if (!usuario?.id) {
@@ -290,6 +281,15 @@ const EvaluarPropuestas = ({
         );
       }
     };
+
+  const cargarAsignacionesInicial = useEffectEvent(() => {
+    if (usuario?.id) void obtenerAsignaciones();
+  });
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => cargarAsignacionesInicial(), 0);
+    return () => window.clearTimeout(timeout);
+  }, [usuario?.id]);
 
   const alternarComentariosDocumento = async (solicitudId) => {
     setErrorComentario('');

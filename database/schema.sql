@@ -26,6 +26,14 @@ USE sinfoni_db;
 
 SET FOREIGN_KEY_CHECKS = 0;
 
+DROP TABLE IF EXISTS login_device_tokens;
+DROP TABLE IF EXISTS trusted_devices;
+DROP TABLE IF EXISTS document_comments;
+DROP TABLE IF EXISTS account_deletion_tokens;
+DROP TABLE IF EXISTS email_change_tokens;
+DROP TABLE IF EXISTS notifications;
+DROP TABLE IF EXISTS login_sessions;
+DROP TABLE IF EXISTS user_preferences;
 DROP TABLE IF EXISTS password_reset_tokens;
 DROP TABLE IF EXISTS email_verification_tokens;
 DROP TABLE IF EXISTS documentos_solicitud;
@@ -76,7 +84,7 @@ CREATE TABLE sedes (
 -- 3. Ningún otro correo puede tener rol Admin.
 --
 -- 4. El registro público NO depende de esta tabla para decidir
---    el rol; el backend fuerza Profesor.
+--    el rol, el backend fuerza Profesor.
 --
 -- 5. La contraseña permanece hasheada.
 -- ============================================================
@@ -132,6 +140,18 @@ CREATE TABLE usuarios (
     DEFAULT FALSE,
 
   correo_verificado_at TIMESTAMP
+    NULL,
+
+  account_status ENUM(
+    'active',
+    'pending_deletion',
+    'disabled'
+  ) NOT NULL DEFAULT 'active',
+
+  deletion_requested_at DATETIME
+    NULL,
+
+  deletion_scheduled_at DATETIME
     NULL,
 
   created_at TIMESTAMP
@@ -270,6 +290,7 @@ CREATE TABLE solicitudes (
     'Borrador',
     'Radicado',
     'En Evaluación',
+    'Correcciones solicitadas',
     'Aprobado',
     'Rechazado'
   )
@@ -554,6 +575,28 @@ CREATE TABLE documentos_solicitud (
   archivo_url VARCHAR(255)
     NOT NULL,
 
+  review_status ENUM(
+    'pending',
+    'validated',
+    'rejected',
+    'replaced'
+  ) NOT NULL DEFAULT 'pending',
+
+  review_comment TEXT
+    NULL,
+
+  reviewed_by INT
+    NULL,
+
+  reviewed_at DATETIME
+    NULL,
+
+  version_no INT
+    NOT NULL DEFAULT 1,
+
+  replaced_by INT
+    NULL,
+
   created_at TIMESTAMP
     NOT NULL
     DEFAULT CURRENT_TIMESTAMP,
@@ -562,7 +605,25 @@ CREATE TABLE documentos_solicitud (
     FOREIGN KEY (solicitud_id)
     REFERENCES solicitudes(id)
     ON DELETE CASCADE
-    ON UPDATE CASCADE
+    ON UPDATE CASCADE,
+
+  CONSTRAINT fk_documento_revisor
+    FOREIGN KEY (reviewed_by)
+    REFERENCES usuarios(id)
+    ON DELETE SET NULL
+    ON UPDATE CASCADE,
+
+  CONSTRAINT fk_documento_reemplazo
+    FOREIGN KEY (replaced_by)
+    REFERENCES documentos_solicitud(id)
+    ON DELETE SET NULL
+    ON UPDATE CASCADE,
+
+  INDEX idx_documentos_solicitud_tipo_version (
+    solicitud_id,
+    tipo_documento,
+    version_no
+  )
 
 ) ENGINE=InnoDB
   DEFAULT CHARSET=utf8mb4
@@ -689,7 +750,151 @@ CREATE TABLE password_reset_tokens (
   COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
--- 13. DATOS INICIALES
+-- 13. PREFERENCIAS DE USUARIO
+-- ============================================================
+
+CREATE TABLE user_preferences (
+  usuario_id INT PRIMARY KEY,
+  theme ENUM('light', 'dark', 'system') NOT NULL DEFAULT 'system',
+  text_scale ENUM('compact', 'normal') NOT NULL DEFAULT 'normal',
+  email_notifications BOOLEAN NOT NULL DEFAULT TRUE,
+  deadline_notifications BOOLEAN NOT NULL DEFAULT TRUE,
+  notify_comments BOOLEAN NOT NULL DEFAULT TRUE,
+  notify_assignments BOOLEAN NOT NULL DEFAULT TRUE,
+  notify_deadlines BOOLEAN NOT NULL DEFAULT TRUE,
+  notify_convocations BOOLEAN NOT NULL DEFAULT TRUE,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_preferences_usuario FOREIGN KEY (usuario_id)
+    REFERENCES usuarios(id) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 14. NOTIFICACIONES
+-- ============================================================
+
+CREATE TABLE notifications (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  usuario_id INT NOT NULL,
+  type VARCHAR(50) NOT NULL DEFAULT 'general',
+  title VARCHAR(160) NOT NULL,
+  body VARCHAR(1000) NOT NULL,
+  link VARCHAR(255) NULL,
+  event_key VARCHAR(191) NULL,
+  read_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_notifications_usuario FOREIGN KEY (usuario_id)
+    REFERENCES usuarios(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  UNIQUE KEY uq_notifications_event_key (event_key),
+  INDEX idx_notifications_usuario_read (usuario_id, read_at, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 15. SESIONES DE ACCESO
+-- ============================================================
+
+CREATE TABLE login_sessions (
+  id CHAR(36) PRIMARY KEY,
+  usuario_id INT NOT NULL,
+  ip_address VARCHAR(64) NULL,
+  user_agent VARCHAR(500) NULL,
+  device_hash CHAR(64) NULL,
+  last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  expires_at DATETIME NOT NULL,
+  revoked_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_sessions_usuario FOREIGN KEY (usuario_id)
+    REFERENCES usuarios(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  INDEX idx_sessions_usuario (usuario_id, revoked_at, expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 16. CAMBIO DE CORREO
+-- ============================================================
+
+CREATE TABLE email_change_tokens (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  usuario_id INT NOT NULL,
+  new_email VARCHAR(100) NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  used_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uq_email_change_token UNIQUE (token_hash),
+  CONSTRAINT fk_email_change_usuario FOREIGN KEY (usuario_id)
+    REFERENCES usuarios(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  INDEX idx_email_change_user (usuario_id, used_at, expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 17. CONFIRMACIÓN DE ELIMINACIÓN DE CUENTA
+-- ============================================================
+
+CREATE TABLE account_deletion_tokens (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  usuario_id INT NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  used_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uq_account_deletion_token UNIQUE (token_hash),
+  CONSTRAINT fk_deletion_token_usuario FOREIGN KEY (usuario_id)
+    REFERENCES usuarios(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  INDEX idx_deletion_token_user (usuario_id, used_at, expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 18. DISPOSITIVOS CONFIABLES
+-- ============================================================
+
+CREATE TABLE trusted_devices (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  usuario_id INT NOT NULL,
+  device_hash CHAR(64) NOT NULL,
+  ip_address VARCHAR(64) NOT NULL,
+  user_agent VARCHAR(500) NULL,
+  trusted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uq_trusted_device_ip UNIQUE (usuario_id, device_hash, ip_address),
+  CONSTRAINT fk_trusted_device_user FOREIGN KEY (usuario_id)
+    REFERENCES usuarios(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  INDEX idx_trusted_devices_user (usuario_id, device_hash)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE login_device_tokens (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  usuario_id INT NOT NULL,
+  device_hash CHAR(64) NOT NULL,
+  ip_address VARCHAR(64) NOT NULL,
+  user_agent VARCHAR(500) NULL,
+  token_hash CHAR(64) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  used_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uq_login_device_token UNIQUE (token_hash),
+  CONSTRAINT fk_login_device_user FOREIGN KEY (usuario_id)
+    REFERENCES usuarios(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  INDEX idx_login_device_tokens_user (usuario_id, device_hash, used_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 19. COMENTARIOS DE DOCUMENTOS
+-- ============================================================
+
+CREATE TABLE document_comments (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  documento_id INT NOT NULL,
+  usuario_id INT NOT NULL,
+  comentario TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_document_comments_documento FOREIGN KEY (documento_id)
+    REFERENCES documentos_solicitud(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_document_comments_usuario FOREIGN KEY (usuario_id)
+    REFERENCES usuarios(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  INDEX idx_document_comments_documento (documento_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 20. DATOS INICIALES
 -- ============================================================
 
 INSERT INTO sedes (

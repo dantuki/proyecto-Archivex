@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 
 // CORRECCIÓN: Recibimos la prop 'usuario' de la sesión activa para validar identidades de forma cruzada
 export default function DatosPersonales({ usuario }) {
@@ -75,7 +75,7 @@ export default function DatosPersonales({ usuario }) {
         } else {
           setError(resJson.message || 'No se pudo recuperar la información del perfil.');
         }
-      } catch (err) {
+      } catch {
         setError('Error al conectar con el servidor para traer tu perfil.');
       } finally {
         setLoading(false);
@@ -139,7 +139,7 @@ export default function DatosPersonales({ usuario }) {
       setArchivoCertificado(null);
       setVistaPreviaFoto('');
       setTimeout(() => setMensajeExito(''), 4000);
-    } catch (err) {
+    } catch {
       setError('No se pudo establecer conexión con el backend.');
     }
   };

@@ -1368,6 +1368,18 @@ const forgotPassword =
         ]
       );
 
+      await connection.query(
+        `
+          UPDATE login_sessions
+          SET revoked_at = CURRENT_TIMESTAMP
+          WHERE usuario_id = ?
+            AND revoked_at IS NULL
+        `,
+        [
+          usuario.id
+        ]
+      );
+
       await connection.commit();
 
       // ------------------------------------------------------

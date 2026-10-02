@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useEffectEvent } from 'react';
 
 export default function Noticias({ onVolver }) {
   const [noticias, setNoticias] = useState([]);
@@ -35,15 +35,20 @@ export default function Noticias({ onVolver }) {
       } else {
         setError(resJson.error || 'Error al procesar el historial.');
       }
-    } catch (err) {
+    } catch {
       setError('Error al conectar con el servidor.');
     } finally {
       setLoading(false);
     }
   };
 
+  const cargarNoticiasIniciales = useEffectEvent(() => {
+    void cargarNoticias();
+  });
+
   useEffect(() => {
-    cargarNoticias();
+    const timeout = window.setTimeout(() => cargarNoticiasIniciales(), 0);
+    return () => window.clearTimeout(timeout);
   }, [userId]);
 
   const toggleExpandir = (id) => {
@@ -97,7 +102,7 @@ export default function Noticias({ onVolver }) {
         const errData = await response.json();
         alert(errData.error || 'Ocurrió un error al guardar');
       }
-    } catch (err) {
+    } catch {
       alert('Error de red al intentar guardar los datos.');
     }
   };
@@ -115,7 +120,7 @@ export default function Noticias({ onVolver }) {
       } else {
         alert('No se pudo eliminar el registro.');
       }
-    } catch (err) {
+    } catch {
       alert('Error al conectar con el servidor.');
     }
   };

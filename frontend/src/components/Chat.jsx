@@ -2,13 +2,13 @@ import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 
 const Chat = ({ usuario }) => {
-  const [socket, setSocket] = useState(null);
   const [contactos, setContactos] = useState([]);
   const [contactoActivo, setContactoActivo] = useState(null);
   const [mensajes, setMensajes] = useState([]);
   const [nuevoMensaje, setNuevoMensaje] = useState('');
 
   const contenedorMensajesRef = useRef(null);
+  const socketRef = useRef(null);
 
   // ============================================================
   // TOKEN DE AUTENTICACIÓN
@@ -53,7 +53,7 @@ const Chat = ({ usuario }) => {
       transports: ['websocket', 'polling']
     });
 
-    setSocket(nuevoSocket);
+    socketRef.current = nuevoSocket;
 
     // ----------------------------------------------------------
     // CONEXIÓN
@@ -152,7 +152,7 @@ const Chat = ({ usuario }) => {
 
     return () => {
       nuevoSocket.disconnect();
-      setSocket(null);
+      socketRef.current = null;
     };
   }, [usuario]);
 
@@ -176,14 +176,14 @@ const Chat = ({ usuario }) => {
   const seleccionarContacto = (
     contacto
   ) => {
-    if (!socket) {
+    if (!socketRef.current) {
       return;
     }
 
     setContactoActivo(contacto);
     setMensajes([]);
 
-    socket.emit(
+    socketRef.current.emit(
       'obtener_historial',
       {
         // El backend valida la conversación
@@ -207,12 +207,12 @@ const Chat = ({ usuario }) => {
     if (
       !mensajeLimpio ||
       !contactoActivo ||
-      !socket
+      !socketRef.current
     ) {
       return;
     }
 
-    socket.emit(
+    socketRef.current.emit(
       'enviar_mensaje',
       {
         // El backend IGNORA remitente_id como identidad

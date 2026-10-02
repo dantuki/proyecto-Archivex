@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useEffectEvent, useState } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -14,10 +14,17 @@ export default function NotificationBell({ onNavigate }) {
     } catch { /* El panel sigue disponible aunque falle una consulta secundaria. */ }
   };
 
+  const cargarNotificaciones = useEffectEvent(() => {
+    void load();
+  });
+
   useEffect(() => {
-    load();
-    const interval = window.setInterval(load, 60000);
-    return () => window.clearInterval(interval);
+    const initialTimeout = window.setTimeout(() => cargarNotificaciones(), 0);
+    const interval = window.setInterval(() => cargarNotificaciones(), 60000);
+    return () => {
+      window.clearTimeout(initialTimeout);
+      window.clearInterval(interval);
+    };
   }, []);
   const unread = items.filter((item) => !item.read_at).length;
 

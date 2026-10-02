@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useEffectEvent } from 'react';
 
 const API_BASE =
   'http://localhost:5000/api';
@@ -159,9 +159,7 @@ const descargarDocumento = async (
   }
 };
 
-const Calificaciones = ({
-  usuario
-}) => {
+const Calificaciones = () => {
   const [
     calificaciones,
     setCalificaciones
@@ -176,13 +174,6 @@ const Calificaciones = ({
     error,
     setError
   ] = useState(null);
-
-  useEffect(
-    () => {
-      obtenerCalificaciones();
-    },
-    []
-  );
 
   const obtenerCalificaciones =
     async () => {
@@ -253,6 +244,15 @@ const Calificaciones = ({
         );
       }
     };
+
+  const cargarInicial = useEffectEvent(() => {
+    void obtenerCalificaciones();
+  });
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => cargarInicial(), 0);
+    return () => window.clearTimeout(timeout);
+  }, []);
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">

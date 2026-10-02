@@ -364,6 +364,7 @@ function App() {
         case 'crear_convocatoria':
           return (
             <CrearConvocatoria
+              key={convocatoriaSeleccionada?.id || 'nueva-convocatoria'}
               convocatoriaAEditar={
                 convocatoriaSeleccionada
               }
@@ -428,11 +429,7 @@ function App() {
 
         case 'revisar_solicitudes':
           return (
-            <RevisarSolicitudes
-              usuario={
-                usuario
-              }
-            />
+            <RevisarSolicitudes />
           );
 
         case 'evaluar_propuestas':

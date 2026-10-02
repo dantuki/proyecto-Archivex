@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useEffectEvent } from 'react';
 import axios from 'axios';
 
 const API_BASE = 'http://localhost:5000/api';
@@ -11,9 +11,11 @@ function MisSolicitudes() {
   const [cronologiaAbierta, setCronologiaAbierta] = useState(null);
   const [cargandoCronologia, setCargandoCronologia] = useState(null);
 
-  const obtenerSolicitudes = async () => {
-    setCargando(true);
-    setError(null);
+  const obtenerSolicitudes = async (mostrarCarga = false) => {
+    if (mostrarCarga) {
+      setCargando(true);
+      setError(null);
+    }
     try {
       // Leemos de sessionStorage de manera segura
       const token = sessionStorage.getItem('token');
@@ -36,8 +38,13 @@ function MisSolicitudes() {
     }
   };
 
+  const cargarSolicitudesInicial = useEffectEvent(() => {
+    void obtenerSolicitudes();
+  });
+
   useEffect(() => {
-    obtenerSolicitudes();
+    const timeout = window.setTimeout(() => cargarSolicitudesInicial(), 0);
+    return () => window.clearTimeout(timeout);
   }, []);
 
   const alternarCronologia = async (id) => {
@@ -131,7 +138,7 @@ function MisSolicitudes() {
           {error}
         </p>
         <button
-          onClick={obtenerSolicitudes}
+          onClick={() => obtenerSolicitudes(true)}
           className="mt-5 px-6 py-2.5 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 transition-colors shadow-md text-sm"
         >
           Reintentar

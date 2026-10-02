@@ -1,57 +1,36 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import axios from 'axios';
 
+const formatearFechaParaInput = (fechaString) => {
+  if (!fechaString) return '';
+  const date = new Date(fechaString);
+  if (Number.isNaN(date.getTime())) return '';
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60 * 1000);
+  return localDate.toISOString().slice(0, 16);
+};
+
 function CrearConvocatoria({ alFinalizar, convocatoriaAEditar }) {
-  const [formData, setFormData] = useState({
-    codigo: '',
-    titulo: '',
-    descripcion: '',
-    tipo: 'General',
-    fecha_inicio: '',
-    fecha_cierre: '',
-    presupuesto_max: '',
-    modalidad: '',
-    area_tematica: '',
-    ejes: '',
-    requisitos: '',
-    bases_url: '',
-    plantillas_url: ''
-  });
+  const [formData, setFormData] = useState(() => ({
+    codigo: convocatoriaAEditar?.codigo || '',
+    titulo: convocatoriaAEditar?.titulo || '',
+    descripcion: convocatoriaAEditar?.descripcion || '',
+    tipo: convocatoriaAEditar?.tipo || 'General',
+    fecha_inicio: formatearFechaParaInput(convocatoriaAEditar?.fecha_inicio),
+    fecha_cierre: formatearFechaParaInput(convocatoriaAEditar?.fecha_cierre),
+    presupuesto_max: convocatoriaAEditar?.presupuesto_max || '',
+    modalidad: convocatoriaAEditar?.modalidad || '',
+    area_tematica: convocatoriaAEditar?.area_tematica || '',
+    ejes: convocatoriaAEditar?.ejes || '',
+    requisitos: convocatoriaAEditar?.requisitos || '',
+    bases_url: convocatoriaAEditar?.bases_url || '',
+    plantillas_url: convocatoriaAEditar?.plantillas_url || ''
+  }));
 
   const [archivoBases, setArchivoBases] = useState(null);
   const [mensaje, setMensaje] = useState({ tipo: '', texto: '' });
   const [cargando, setCargando] = useState(false);
 
   const esEdicion = !!convocatoriaAEditar;
-
-  const formatearFechaParaInput = (fechaString) => {
-    if (!fechaString) return '';
-    const d = new Date(fechaString);
-    if (isNaN(d.getTime())) return '';
-    const offset = d.getTimezoneOffset();
-    const localDate = new Date(d.getTime() - (offset * 60 * 1000));
-    return localDate.toISOString().slice(0, 16);
-  };
-
-  useEffect(() => {
-    if (esEdicion && convocatoriaAEditar) {
-      setFormData({
-        codigo: convocatoriaAEditar.codigo || '',
-        titulo: convocatoriaAEditar.titulo || '',
-        descripcion: convocatoriaAEditar.descripcion || '',
-        tipo: convocatoriaAEditar.tipo || 'General',
-        fecha_inicio: formatearFechaParaInput(convocatoriaAEditar.fecha_inicio),
-        fecha_cierre: formatearFechaParaInput(convocatoriaAEditar.fecha_cierre),
-        presupuesto_max: convocatoriaAEditar.presupuesto_max || '',
-        modalidad: convocatoriaAEditar.modalidad || '',
-        area_tematica: convocatoriaAEditar.area_tematica || '',
-        ejes: convocatoriaAEditar.ejes || '',
-        requisitos: convocatoriaAEditar.requisitos || '',
-        bases_url: convocatoriaAEditar.bases_url || '',
-        plantillas_url: convocatoriaAEditar.plantillas_url || ''
-      });
-    }
-  }, [convocatoriaAEditar, esEdicion]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;

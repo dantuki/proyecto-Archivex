@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useEffectEvent } from 'react';
 import axios from 'axios';
 
 const API_BASE = 'http://localhost:5000/api';
@@ -217,25 +217,6 @@ function FilaSolicitud({
   const [mostrarDocumentos, setMostrarDocumentos] = useState(false);
   const [comentariosDocumento, setComentariosDocumento] = useState({});
   const [errorDocumento, setErrorDocumento] = useState('');
-
-  useEffect(() => {
-    setNuevoEstado(
-      sol.estado
-    );
-
-    setMotivo(
-      sol.motivo_decision || ''
-    );
-
-    setMostrarMotivoInput(
-      sol.estado ===
-        'Rechazado'
-    );
-
-    setEvaluadorSeleccionado(
-      sol.evaluador_id || ''
-    );
-  }, [sol]);
 
   const handleEstadoChange =
     async (
@@ -945,9 +926,7 @@ function FilaSolicitud({
   );
 }
 
-function RevisarSolicitudes({
-  usuario
-}) {
+function RevisarSolicitudes() {
   const [
     solicitudes,
     setSolicitudes
@@ -1071,8 +1050,13 @@ function RevisarSolicitudes({
       }
     };
 
+  const cargarDatosIniciales = useEffectEvent(() => {
+    void obtenerDatos();
+  });
+
   useEffect(() => {
-    obtenerDatos();
+    const timeout = window.setTimeout(() => cargarDatosIniciales(), 0);
+    return () => window.clearTimeout(timeout);
   }, []);
 
   const descargarDocumento =
@@ -1355,7 +1339,7 @@ function RevisarSolicitudes({
                 {solicitudesFiltradas.map(
                   (sol) => (
                     <FilaSolicitud
-                      key={sol.id}
+                      key={`${sol.id}:${sol.estado}:${sol.motivo_decision || ''}`}
                       sol={sol}
                       evaluadores={
                         evaluadores

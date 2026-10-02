@@ -3,7 +3,7 @@ import axios from 'axios';
 
 const FormularioSolicitud = () => {
   const [formData, setFormData] = useState({
-    usuario_id: '',
+    usuario_id: localStorage.getItem('userId') || '',
     convocatoria_id: '',
     sede_id: '',
     num_solicitud: '',
@@ -22,11 +22,6 @@ const FormularioSolicitud = () => {
 
   // Cargar ID de usuario y lista de convocatorias disponibles
   useEffect(() => {
-    const storedUserId = localStorage.getItem('userId');
-    if (storedUserId) {
-      setFormData(prev => ({ ...prev, usuario_id: storedUserId }));
-    }
-
     const cargarConvocatorias = async () => {
       try {
         const response = await axios.get('http://localhost:5000/api/convocatorias');
@@ -103,7 +98,7 @@ const FormularioSolicitud = () => {
         // Limpiar archivos cargados
         setArchivos({ presupuesto: null, cronograma: null, honestidad: null, identidad: null });
       }
-    } catch (err) { 
+    } catch {
       setMensaje({ tipo: 'error', texto: 'Error al procesar y almacenar la solicitud en el servidor.' }); 
     }
   };

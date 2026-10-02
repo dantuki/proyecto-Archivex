@@ -1,6 +1,7 @@
 import {
   useState,
-  useEffect
+  useEffect,
+  useEffectEvent
 } from 'react';
 
 // ============================================================
@@ -211,12 +212,14 @@ const ControlUsuarios = () => {
   // CARGA INICIAL
   // ==========================================================
 
-  useEffect(
-    () => {
-      consultarUsuarios();
-    },
-    []
-  );
+  const cargarUsuariosInicial = useEffectEvent(() => {
+    void consultarUsuarios();
+  });
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => cargarUsuariosInicial(), 0);
+    return () => window.clearTimeout(timeout);
+  }, []);
 
   // ==========================================================
   // ELIMINAR USUARIO

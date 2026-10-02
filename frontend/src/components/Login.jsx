@@ -1,4 +1,4 @@
-import React, {
+import {
   useEffect,
   useState,
   useRef
@@ -21,9 +21,26 @@ const obtenerIdDispositivo = () => {
   return deviceId;
 };
 
+const obtenerEnlaceAuthInicial = () => {
+  const params = new URLSearchParams(window.location.search);
+  const enlaces = [
+    ['reset-token', 'reset'],
+    ['verify-token', 'verify'],
+    ['email-change-token', 'confirm-email-change'],
+    ['delete-account-token', 'confirm-deletion'],
+    ['device-token', 'verify-device']
+  ];
+  const enlace = enlaces.find(([param]) => params.has(param));
+  return enlace
+    ? { flow: enlace[1], token: params.get(enlace[0]), param: enlace[0] }
+    : { flow: 'login', token: '', param: null };
+};
+
 export default function AuthContainer({
   alAutenticar
 }) {
+  const [enlaceInicial] = useState(obtenerEnlaceAuthInicial);
+
   const [
     isLogin,
     setIsLogin
@@ -34,13 +51,13 @@ export default function AuthContainer({
     authFlow,
     setAuthFlow
   ] =
-    useState('login');
+    useState(enlaceInicial.flow);
 
   const [
     flowToken,
     setFlowToken
   ] =
-    useState('');
+    useState(enlaceInicial.token || '');
 
   const [
     showPassword,
@@ -65,35 +82,17 @@ export default function AuthContainer({
 
   useEffect(() => {
     const currentUrl = new URL(window.location.href);
-    const resetToken = currentUrl.searchParams.get('reset-token');
-    const verifyToken = currentUrl.searchParams.get('verify-token');
-    const emailChangeToken = currentUrl.searchParams.get('email-change-token');
-    const deletionToken = currentUrl.searchParams.get('delete-account-token');
-    const deviceToken = currentUrl.searchParams.get('device-token');
+    const sensitiveParams = [
+      'reset-token',
+      'verify-token',
+      'email-change-token',
+      'delete-account-token',
+      'device-token'
+    ];
+    const hasSensitiveParam = sensitiveParams.some((param) => currentUrl.searchParams.has(param));
+    sensitiveParams.forEach((param) => currentUrl.searchParams.delete(param));
 
-    if (resetToken) {
-      setFlowToken(resetToken);
-      setAuthFlow('reset');
-      currentUrl.searchParams.delete('reset-token');
-    } else if (verifyToken) {
-      setFlowToken(verifyToken);
-      setAuthFlow('verify');
-      currentUrl.searchParams.delete('verify-token');
-    } else if (emailChangeToken) {
-      setFlowToken(emailChangeToken);
-      setAuthFlow('confirm-email-change');
-      currentUrl.searchParams.delete('email-change-token');
-    } else if (deletionToken) {
-      setFlowToken(deletionToken);
-      setAuthFlow('confirm-deletion');
-      currentUrl.searchParams.delete('delete-account-token');
-    } else if (deviceToken) {
-      setFlowToken(deviceToken);
-      setAuthFlow('verify-device');
-      currentUrl.searchParams.delete('device-token');
-    }
-
-    if (resetToken || verifyToken || emailChangeToken || deletionToken || deviceToken) {
+    if (hasSensitiveParam) {
       window.history.replaceState(
         {},
         document.title,

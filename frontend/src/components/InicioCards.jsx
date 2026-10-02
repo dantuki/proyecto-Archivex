@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -75,27 +75,20 @@ const InicioCards = ({ cambiarVista, usuario }) => {
     void cargarMetricas();
   }, [esAdmin, esEvaluador, usuario?.id]);
 
-  // Configuración dinámica de opciones para Convocatorias / Calificaciones
-  let opcionesConvocatorias = [];
-
-  if (esAdmin) {
-    opcionesConvocatorias = [
+  const opcionesConvocatorias = esAdmin
+    ? [
       { nombre: 'Convocatorias Abiertas', vista: 'convocatorias_abiertas' },
       { nombre: 'Revisar Solicitudes (Admin)', vista: 'revisar_solicitudes' },
       { nombre: 'Crear Convocatoria', vista: 'crear_convocatoria' }
-    ];
-  } else if (esEvaluador) {
-    // Si es evaluador, solo dejamos la opción para calificar las propuestas asignadas por el Admin
-    opcionesConvocatorias = [
+    ]
+    : esEvaluador
+      ? [
       { nombre: 'Ver Evaluaciones Asignadas', vista: 'evaluar_propuestas' }
-    ];
-  } else {
-    // Caso por defecto (Docente común)
-    opcionesConvocatorias = [
+      ]
+      : [
       { nombre: 'Convocatorias Abiertas', vista: 'convocatorias_abiertas' },
       { nombre: 'Mis Solicitudes (Historial)', vista: 'mis_solicitudes' }
-    ];
-  }
+      ];
 
   const categorias = [
     {

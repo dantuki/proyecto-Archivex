@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useEffectEvent } from 'react';
 import axios from 'axios';
 
 const API_BASE = 'http://localhost:5000/api';
@@ -25,8 +25,13 @@ function ConvocatoriasAbiertas({ alSeleccionarConvocatoria, alEditarConvocatoria
     }
   };
 
+  const cargarInicial = useEffectEvent(() => {
+    void obtenerConvocatorias();
+  });
+
   useEffect(() => {
-    obtenerConvocatorias();
+    const timeout = window.setTimeout(() => cargarInicial(), 0);
+    return () => window.clearTimeout(timeout);
   }, []);
 
   const handleEliminar = async (id) => {

@@ -133,20 +133,27 @@ const enviarCorreo = async ({ transporter, mail, destinatario }) => {
         accepted: resultado.accepted,
         rejected: resultado.rejected
       });
+    } else {
+      console.info('[SMTP] Envío completado', {
+        messageId: resultado.messageId,
+        acceptedCount: Array.isArray(resultado.accepted) ? resultado.accepted.length : 0,
+        rejectedCount: Array.isArray(resultado.rejected) ? resultado.rejected.length : 0
+      });
     }
 
     return resultado;
   } catch (error) {
-    if (enDesarrollo) {
-      console.error('[SMTP] Falló el envío', {
-        destinatario,
-        code: redactarSecretos(error.code),
-        command: redactarSecretos(error.command),
-        responseCode: error.responseCode,
-        response: redactarSecretos(error.response),
-        message: redactarSecretos(error.message)
-      });
-    }
+    const detallesError = {
+      code: redactarSecretos(error.code),
+      command: redactarSecretos(error.command),
+      responseCode: error.responseCode,
+      response: redactarSecretos(error.response),
+      message: redactarSecretos(error.message)
+    };
+    console.error(
+      '[SMTP] Falló el envío',
+      enDesarrollo ? { destinatario, ...detallesError } : detallesError
+    );
 
     throw error;
   }
