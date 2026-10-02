@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { API_URL, BACKEND_ORIGIN } from '../config/api';
 
 // CORRECCIÓN: Recibimos la prop 'usuario' de la sesión activa para validar identidades de forma cruzada
 export default function DatosPersonales({ usuario }) {
@@ -46,7 +47,7 @@ export default function DatosPersonales({ usuario }) {
         const idUsuario = parseInt(idUsuarioActivo, 10);
         setUserId(idUsuario);
 
-        const response = await fetch(`http://localhost:5000/api/usuarios/${idUsuario}`, {
+        const response = await fetch(`${API_URL}/usuarios/${idUsuario}`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         
@@ -112,7 +113,7 @@ export default function DatosPersonales({ usuario }) {
     if (archivoCertificado) formData.append('certificado', archivoCertificado);
 
     try {
-      const response = await fetch(`http://localhost:5000/api/usuarios/${userId}`, {
+      const response = await fetch(`${API_URL}/usuarios/${userId}`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}` },
         body: formData 
@@ -191,7 +192,7 @@ export default function DatosPersonales({ usuario }) {
               />
             ) : fotoUrl ? (
               <img 
-                src={`http://localhost:5000${fotoUrl}`} 
+                src={`${BACKEND_ORIGIN}${fotoUrl}`}
                 alt="Perfil ArchiveX" 
                 className="w-full h-full object-cover rounded-xl border-4 border-slate-100 shadow-sm"
                 onError={(e) => {
@@ -369,7 +370,7 @@ export default function DatosPersonales({ usuario }) {
               <div className="flex flex-wrap items-center gap-4 mt-1">
                 {certificadoUrl && (
                   <a 
-                    href={`http://localhost:5000${certificadoUrl}`} 
+                    href={`${BACKEND_ORIGIN}${certificadoUrl}`}
                     target="_blank" 
                     rel="noreferrer"
                     className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200 transition-colors inline-flex items-center gap-1.5"

@@ -1,7 +1,9 @@
 import { useState, useEffect, useEffectEvent } from 'react';
 import axios from 'axios';
 
-const API_BASE = 'http://localhost:5000/api';
+import { API_URL } from '../config/api';
+
+const API_BASE = API_URL;
 
 function ConvocatoriasAbiertas({ alSeleccionarConvocatoria, alEditarConvocatoria, usuario }) {
   const [convocatorias, setConvocatorias] = useState([]);

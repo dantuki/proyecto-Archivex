@@ -1,6 +1,6 @@
 import { useEffect, useEffectEvent, useState } from 'react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+import { API_URL } from '../config/api';
 
 export default function NotificationBell({ onNavigate }) {
   const [open, setOpen] = useState(false);

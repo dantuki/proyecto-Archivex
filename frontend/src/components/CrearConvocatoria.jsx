@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import axios from 'axios';
+import { API_URL } from '../config/api';
 
 const formatearFechaParaInput = (fechaString) => {
   if (!fechaString) return '';
@@ -69,14 +70,14 @@ function CrearConvocatoria({ alFinalizar, convocatoriaAEditar }) {
 
       let response;
       if (esEdicion) {
-        response = await axios.put(`http://localhost:5000/api/convocatorias/${convocatoriaAEditar.id}`, data, {
+        response = await axios.put(`${API_URL}/convocatorias/${convocatoriaAEditar.id}`, data, {
           headers: { 
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'multipart/form-data'
           }
         });
       } else {
-        response = await axios.post('http://localhost:5000/api/convocatorias', data, {
+        response = await axios.post(`${API_URL}/convocatorias`, data, {
           headers: { 
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'multipart/form-data'

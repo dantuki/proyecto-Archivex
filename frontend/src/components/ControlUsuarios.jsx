@@ -3,13 +3,13 @@ import {
   useEffect,
   useEffectEvent
 } from 'react';
+import { BACKEND_ORIGIN } from '../config/api';
 
 // ============================================================
 // CONFIGURACIÓN
 // ============================================================
 
-const API_URL =
-  'http://localhost:5000';
+const API_URL = BACKEND_ORIGIN;
 
 const ADMIN_EMAIL =
   'aracelly.buitrago@campusucc.edu.co';

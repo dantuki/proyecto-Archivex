@@ -1,7 +1,9 @@
 import { useState, useEffect, useEffectEvent } from 'react';
 import axios from 'axios';
 
-const API_BASE = 'http://localhost:5000/api';
+import { API_URL, BACKEND_ORIGIN } from '../config/api';
+
+const API_BASE = API_URL;
 
 function obtenerToken() {
   return (
@@ -59,7 +61,7 @@ async function descargarDocumentoSeguro(nombreArchivo) {
       );
 
     window.open(
-      `http://localhost:5000/uploads/${encodeURIComponent(
+      `${BACKEND_ORIGIN}/uploads/${encodeURIComponent(
         nombrePublico
       )}`,
       '_blank',

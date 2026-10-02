@@ -1,4 +1,5 @@
 import { useState, useEffect, useEffectEvent } from 'react';
+import { API_URL, BACKEND_ORIGIN } from '../config/api';
 
 export default function Noticias({ onVolver }) {
   const [noticias, setNoticias] = useState([]);
@@ -26,7 +27,7 @@ export default function Noticias({ onVolver }) {
       return;
     }
     try {
-      const response = await fetch(`http://localhost:5000/api/noticias/usuario/${userId}`, {
+      const response = await fetch(`${API_URL}/noticias/usuario/${userId}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const resJson = await response.json();
@@ -83,8 +84,8 @@ export default function Noticias({ onVolver }) {
     if (archivo) formData.append('archivo', archivo);
 
     const url = editandoId 
-      ? `http://localhost:5000/api/noticias/${editandoId}`
-      : 'http://localhost:5000/api/noticias';
+      ? `${API_URL}/noticias/${editandoId}`
+      : `${API_URL}/noticias`;
     
     const method = editandoId ? 'PUT' : 'POST';
 
@@ -110,7 +111,7 @@ export default function Noticias({ onVolver }) {
   const handleEliminar = async (id) => {
     if (!window.confirm('¿Estás completamente seguro de eliminar este registro?')) return;
     try {
-      const response = await fetch(`http://localhost:5000/api/noticias/${id}`, {
+      const response = await fetch(`${API_URL}/noticias/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -214,7 +215,7 @@ export default function Noticias({ onVolver }) {
                             {item.archivo_url && (
                               <div className="pt-1">
                                 <a 
-                                  href={`http://localhost:5000${item.archivo_url}`} 
+                                  href={`${BACKEND_ORIGIN}${item.archivo_url}`}
                                   target="_blank" 
                                   rel="noreferrer"
                                   className="inline-flex items-center gap-1.5 text-[11px] bg-blue-50 text-blue-700 hover:bg-blue-100 px-2.5 py-1 rounded-lg font-bold transition-colors border border-blue-100 shadow-sm"
