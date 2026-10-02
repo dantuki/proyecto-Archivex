@@ -496,7 +496,8 @@ const register =
 
       const rolesPublicos = [
         'Profesor',
-        'Docente'
+        'Docente',
+        'Evaluador'
       ];
 
       if (!rolesPublicos.includes(rol)) {
