@@ -18,6 +18,7 @@ const Asignacion = {
 
         s.num_solicitud AS codigoPropuesta,
         s.titulo_propuesta,
+        c.fecha_cierre AS fecha_limite,
 
         u.nombre_completo AS docente_nombre,
 
@@ -27,6 +28,9 @@ const Asignacion = {
 
       JOIN solicitudes s
         ON a.solicitud_id = s.id
+
+      JOIN convocatorias c
+        ON s.convocatoria_id = c.id
 
       JOIN usuarios u
         ON s.usuario_id = u.id
@@ -105,6 +109,8 @@ const Asignacion = {
         s.num_solicitud AS codigoPropuesta,
         s.titulo_propuesta,
 
+        c.fecha_cierre AS fecha_limite,
+
         s.presupuesto_url AS presupuesto,
         s.cronograma_url AS cronograma,
         s.honestidad_url AS honestidad,
@@ -118,6 +124,9 @@ const Asignacion = {
 
       JOIN solicitudes s
         ON a.solicitud_id = s.id
+
+      JOIN convocatorias c
+        ON s.convocatoria_id = c.id
 
       JOIN usuarios u
         ON s.usuario_id = u.id

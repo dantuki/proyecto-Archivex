@@ -260,6 +260,71 @@ const sendEmailVerification = async ({ to, name, token }) => {
 
 const enviarCorreoVerificacion = sendEmailVerification;
 
+const sendEmailChange = async ({ to, name, token }) => {
+  if (typeof to !== 'string' || !to.trim() || typeof token !== 'string' || !token.trim()) {
+    throw new Error('El correo y token de confirmación son obligatorios.');
+  }
+
+  const transporter = crearTransporter();
+  const config = obtenerConfiguracionMail();
+  const confirmationUrl = `${obtenerFrontendOrigin()}/?email-change-token=${encodeURIComponent(token.trim())}`;
+  const nombreSeguro = escaparHtml(name || 'Usuario de ArchiveX');
+
+  return enviarCorreo({
+    transporter,
+    destinatario: to.trim(),
+    mail: {
+      from: config.from,
+      to: to.trim(),
+      subject: 'ArchiveX - Confirma tu nuevo correo',
+      text: `Hola ${name || 'usuario'}, confirma el nuevo correo de tu cuenta de ArchiveX en este enlace (expira en 30 minutos):\n\n${confirmationUrl}`,
+      html: `<p>Hola <strong>${nombreSeguro}</strong>, confirma el nuevo correo de tu cuenta de ArchiveX.</p><p><a href="${confirmationUrl}">Confirmar nuevo correo</a></p><p>Este enlace expira en 30 minutos.</p>`
+    }
+  });
+};
+
+const sendAccountDeletionConfirmation = async ({ to, name, token }) => {
+  if (typeof to !== 'string' || !to.trim() || typeof token !== 'string' || !token.trim()) {
+    throw new Error('El correo y token de confirmación son obligatorios.');
+  }
+
+  const transporter = crearTransporter();
+  const config = obtenerConfiguracionMail();
+  const confirmationUrl = `${obtenerFrontendOrigin()}/?delete-account-token=${encodeURIComponent(token.trim())}`;
+  const nombreSeguro = escaparHtml(name || 'Usuario de ArchiveX');
+  return enviarCorreo({
+    transporter,
+    destinatario: to.trim(),
+    mail: {
+      from: config.from,
+      to: to.trim(),
+      subject: 'ArchiveX - Confirma la solicitud de eliminación de cuenta',
+      text: `Hola ${name || 'usuario'}, confirma tu solicitud de eliminación de cuenta. El acceso se desactivará y la solicitud vencerá en 30 días. No se eliminarán automáticamente los expedientes académicos.\n\n${confirmationUrl}`,
+      html: `<p>Hola <strong>${nombreSeguro}</strong>, confirma la solicitud de eliminación de tu cuenta ArchiveX.</p><p>La cuenta se desactivará y quedará programada para dentro de 30 días. Los expedientes académicos se conservarán.</p><p><a href="${confirmationUrl}">Confirmar solicitud</a></p>`
+    }
+  });
+};
+
+const sendNotificationEmail = async ({ to, name, title, body }) => {
+  if (typeof to !== 'string' || !to.trim()) throw new Error('El correo del destinatario es obligatorio.');
+  const transporter = crearTransporter();
+  const config = obtenerConfiguracionMail();
+  const nombreSeguro = escaparHtml(name || 'Usuario de ArchiveX');
+  const titleSafe = escaparHtml(title);
+  const bodySafe = escaparHtml(body);
+  return enviarCorreo({
+    transporter,
+    destinatario: to.trim(),
+    mail: {
+      from: config.from,
+      to: to.trim(),
+      subject: `ArchiveX - ${title}`,
+      text: `Hola ${name || 'usuario'},\n\n${title}\n${body}`,
+      html: `<p>Hola <strong>${nombreSeguro}</strong>,</p><h2>${titleSafe}</h2><p>${bodySafe}</p>`
+    }
+  });
+};
+
 // ============================================================
 // EXPORTACIÓN
 // ============================================================
@@ -268,5 +333,8 @@ module.exports = {
   sendPasswordResetEmail,
   enviarCorreoRecuperacion,
   sendEmailVerification,
-  enviarCorreoVerificacion
+  enviarCorreoVerificacion,
+  sendEmailChange,
+  sendAccountDeletionConfirmation,
+  sendNotificationEmail
 };

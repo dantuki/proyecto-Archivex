@@ -1,5 +1,7 @@
 const Solicitud = require('../models/solicitudModel');
 const db = require('../config/db');
+const Trazabilidad = require('../models/trazabilidadModel');
+const { crearNotificacion } = require('./settingsController');
 
 // ============================================================
 // UTILIDADES
@@ -247,6 +249,35 @@ const createPostulacion = async (req, res) => {
         id_url
       });
 
+    const documentosIniciales = [
+      ['Presupuesto', presupuesto],
+      ['Cronograma', cronograma],
+      ['Honestidad', honestidad],
+      ['Identidad', identidad]
+    ];
+
+    for (const [tipo, archivo] of documentosIniciales) {
+      await db.query(
+        `INSERT INTO documentos_solicitud
+         (solicitud_id, nombre_archivo, tipo_documento, archivo_url)
+         VALUES (?, ?, ?, ?)`,
+        [
+          nuevaSolicitudId,
+          archivo.originalname,
+          tipo,
+          `uploads_private/${archivo.filename}`
+        ]
+      );
+    }
+
+    await Trazabilidad.registrarCambio({
+      solicitud_id: nuevaSolicitudId,
+      usuario_id: usuarioId,
+      estado_anterior: null,
+      estado_nuevo: 'Radicado',
+      motivo_cambio: 'Propuesta radicada por el propietario.'
+    });
+
     return res.status(201).json({
       status: 'success',
       message:
@@ -464,6 +495,7 @@ const updateEstadoPostulacion = async (req, res) => {
       'Borrador',
       'Radicado',
       'En Evaluación',
+      'Correcciones solicitadas',
       'Aprobado',
       'Rechazado'
     ];
@@ -500,7 +532,7 @@ const updateEstadoPostulacion = async (req, res) => {
     // El motivo solo tiene sentido cuando la propuesta
     // es rechazada.
     const motivoFinal =
-      estado === 'Rechazado'
+      estado === 'Rechazado' || estado === 'Correcciones solicitadas'
         ? (
             typeof motivo_decision === 'string'
               ? motivo_decision.trim()
@@ -508,6 +540,7 @@ const updateEstadoPostulacion = async (req, res) => {
           )
         : null;
 
+    const solicitudPrevia = await Solicitud.getById(idNumerico);
     const affectedRows =
       await Solicitud.updateEstado(
         idNumerico,
@@ -520,6 +553,24 @@ const updateEstadoPostulacion = async (req, res) => {
         status: 'error',
         message:
           'No se encontró la propuesta solicitada para modificar su estado.'
+      });
+    }
+
+    if (solicitudPrevia && solicitudPrevia.estado !== estado) {
+      await Trazabilidad.registrarCambio({
+        solicitud_id: idNumerico,
+        usuario_id: obtenerUsuarioAutenticadoId(req),
+        estado_anterior: solicitudPrevia.estado,
+        estado_nuevo: estado,
+        motivo_cambio: motivoFinal
+      });
+      await crearNotificacion({
+        usuarioId: solicitudPrevia.usuario_id,
+        type: 'comment',
+        title: estado === 'Correcciones solicitadas' ? 'Se solicitaron correcciones' : 'Tu solicitud cambió de estado',
+        body: `La solicitud "${solicitudPrevia.titulo_propuesta}" ahora está: ${estado}.${motivoFinal ? ` ${motivoFinal}` : ''}`,
+        link: '/mis-solicitudes',
+        eventKey: `solicitud:${idNumerico}:estado:${estado}:${Date.now()}`
       });
     }
 

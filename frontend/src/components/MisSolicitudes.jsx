@@ -7,6 +7,9 @@ function MisSolicitudes() {
   const [solicitudes, setSolicitudes] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
+  const [cronologia, setCronologia] = useState({});
+  const [cronologiaAbierta, setCronologiaAbierta] = useState(null);
+  const [cargandoCronologia, setCargandoCronologia] = useState(null);
 
   const obtenerSolicitudes = async () => {
     setCargando(true);
@@ -37,6 +40,62 @@ function MisSolicitudes() {
     obtenerSolicitudes();
   }, []);
 
+  const alternarCronologia = async (id) => {
+    if (cronologiaAbierta === id) {
+      setCronologiaAbierta(null);
+      return;
+    }
+    setCronologiaAbierta(id);
+    if (cronologia[id]) return;
+    setCargandoCronologia(id);
+    try {
+      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+      const respuesta = await axios.get(`${API_BASE}/solicitudes/${id}/cronologia`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setCronologia((actual) => ({ ...actual, [id]: respuesta.data.data }));
+    } catch (err) {
+      setError(err.response?.data?.message || 'No se pudo cargar la cronología.');
+    } finally {
+      setCargandoCronologia(null);
+    }
+  };
+
+  const previsualizarDocumento = async (archivoUrl) => {
+    if (!archivoUrl) return;
+    const ruta = archivoUrl.startsWith('/') ? archivoUrl : `/${archivoUrl}`;
+    if (!ruta.includes('/uploads_private/')) {
+      window.open(`http://localhost:5000${ruta}`, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
+    const ventana = window.open('about:blank', '_blank');
+    if (ventana) ventana.opener = null;
+    try {
+      const nombre = ruta.split('/').pop();
+      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+      const respuesta = await fetch(`${API_BASE}/archivos-privados/${encodeURIComponent(nombre)}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!respuesta.ok) throw new Error('No tienes acceso a este archivo.');
+      const url = URL.createObjectURL(await respuesta.blob());
+      if (ventana) ventana.location = url;
+      else {
+        const enlace = document.createElement('a');
+        enlace.href = url;
+        enlace.target = '_blank';
+        enlace.rel = 'noopener noreferrer';
+        enlace.click();
+      }
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (previewError) {
+      if (ventana) ventana.close();
+      setError(previewError.message || 'No se pudo abrir el documento.');
+    }
+  };
+
+  const estadosFlujo = ['Radicado', 'En Evaluación', 'Correcciones solicitadas', 'Aprobado / Rechazado'];
+
   const getEstadoBadge = (estado) => {
     switch (estado) {
       case 'Aprobado':
@@ -45,6 +104,8 @@ function MisSolicitudes() {
         return 'bg-red-100 text-red-800 border-red-200';
       case 'En Evaluación':
         return 'bg-amber-100 text-amber-800 border-amber-200';
+      case 'Correcciones solicitadas':
+        return 'bg-orange-100 text-orange-800 border-orange-200';
       case 'Radicado':
         return 'bg-blue-100 text-blue-800 border-blue-200';
       default:
@@ -104,7 +165,7 @@ function MisSolicitudes() {
               <div className="flex-1 space-y-3 text-left">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono text-xs font-extrabold px-3 py-1 bg-slate-100 rounded-lg text-slate-600">
-                    {sol.num_solicitud}
+                    {sol.codigoPropuesta || sol.num_solicitud}
                   </span>
                   <span className={`text-xs font-bold px-3 py-0.5 rounded-full border ${getEstadoBadge(sol.estado)}`}>
                     {sol.estado}
@@ -116,13 +177,13 @@ function MisSolicitudes() {
                     {sol.titulo_propuesta}
                   </h3>
                   <p className="text-xs text-[#5B9BD5] font-semibold mt-1">
-                    🎯 Convocatoria: {sol.convocatoria}
+                    🎯 Convocatoria: {sol.convocatoria || 'Sin convocatoria'}
                   </p>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-500 bg-slate-50 p-3 rounded-xl border border-slate-100">
-                  <p>🏛️ <strong>Sede:</strong> {sol.sede}</p>
-                  <p>📅 <strong>Radicado el:</strong> {new Date(sol.created_at).toLocaleDateString()}</p>
+                  <p>🏛️ <strong>Sede:</strong> {sol.nombre_sede || sol.sede || 'Sin sede'}</p>
+                  <p>📅 <strong>Radicado el:</strong> {new Date(sol.fecha_radicacion || sol.created_at).toLocaleDateString()}</p>
                   {sol.observaciones && (
                     <p className="sm:col-span-2 italic text-slate-400">
                       💬 <strong>Tus observaciones:</strong> {sol.observaciones}
@@ -142,56 +203,70 @@ function MisSolicitudes() {
                     {sol.motivo_decision}
                   </div>
                 )}
+
+                <button type="button" onClick={() => alternarCronologia(sol.id)} className="text-sm font-semibold text-blue-700 hover:underline">
+                  {cronologiaAbierta === sol.id ? 'Ocultar seguimiento' : 'Ver seguimiento y documentos'}
+                </button>
+
+                {cronologiaAbierta === sol.id && (
+                  <div className="space-y-5 rounded-xl border border-slate-200 p-4">
+                    {cargandoCronologia === sol.id ? <p className="text-sm text-slate-500">Cargando seguimiento...</p> : (
+                      <>
+                        <div>
+                          <h4 className="text-sm font-bold text-slate-800 mb-3">Seguimiento</h4>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            {estadosFlujo.map((estado, index) => {
+                              const estadoActual = cronologia[sol.id]?.estado || sol.estado;
+                              const progreso = estadoActual === 'Aprobado' || estadoActual === 'Rechazado'
+                                ? 3 : estadosFlujo.indexOf(estadoActual);
+                              return <div key={estado} className={`rounded-lg border p-2 text-xs ${index <= progreso ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-slate-200 text-slate-400'}`}>
+                                <span className="block font-bold">{estado}</span>
+                                {index === progreso && <span>Estado actual</span>}
+                              </div>;
+                            })}
+                          </div>
+                          <ol className="mt-4 space-y-3 border-l-2 border-slate-200 pl-4">
+                            {(cronologia[sol.id]?.timeline || []).map((evento) => <li key={evento.id} className="text-xs text-slate-600">
+                              <p className="font-bold text-slate-800">{evento.estado_anterior ? `${evento.estado_anterior} → ` : ''}{evento.estado_nuevo}</p>
+                              <p>{new Date(evento.fecha_cambio).toLocaleString()} · {evento.responsable || 'Sistema'}</p>
+                              {evento.motivo_cambio && <p className="mt-1">{evento.motivo_cambio}</p>}
+                            </li>)}
+                          </ol>
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-slate-800 mb-2">Documentos y versiones</h4>
+                          {(cronologia[sol.id]?.documents || []).length ? (
+                            <div className="space-y-2">{cronologia[sol.id].documents.map((documento) => <div key={documento.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 p-3 text-xs">
+                              <div>
+                                <p className="font-semibold text-slate-700">{documento.tipo_documento} · v{documento.version_no} · {documento.review_status === 'validated' ? 'Validado' : documento.review_status === 'rejected' ? 'Requiere correcciones' : documento.review_status === 'replaced' ? 'Reemplazado' : 'Pendiente'}</p>
+                                {documento.review_comment && <p className="mt-1 text-slate-500">{documento.review_comment}</p>}
+                              </div>
+                              <button type="button" onClick={() => previsualizarDocumento(documento.archivo_url)} className="font-semibold text-blue-700 hover:underline">Vista previa</button>
+                            </div>)}</div>
+                          ) : <p className="text-xs text-slate-500">No hay documentos indexados para mostrar.</p>}
+                        </div>
+                        {(cronologia[sol.id]?.comments || []).length > 0 && <div>
+                          <h4 className="text-sm font-bold text-slate-800 mb-2">Comentarios de evaluación</h4>
+                          <div className="space-y-2">{cronologia[sol.id].comments.map((comentario) => <p key={comentario.id} className="rounded-lg bg-blue-50 p-3 text-xs text-slate-700">
+                            <strong>{comentario.autor || 'Evaluador'} · {new Date(comentario.created_at).toLocaleString()}</strong><br />{comentario.comentario}
+                          </p>)}</div>
+                        </div>}
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-col justify-center gap-2.5 bg-slate-50/50 p-4 rounded-xl border border-slate-100 md:w-56 shrink-0 text-left">
                 <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block border-b border-slate-200 pb-1.5 mb-1">
                   Documentación Anexa
                 </span>
-                
-                {sol.presupuesto_url && (
-                  <a 
-                    href={`http://localhost:5000/${sol.presupuesto_url.startsWith('/') ? sol.presupuesto_url.slice(1) : sol.presupuesto_url}`} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="text-xs text-slate-600 hover:text-[#5B9BD5] font-semibold flex items-center gap-2 transition-colors"
-                  >
-                    📄 Presupuesto.pdf
-                  </a>
-                )}
-
-                {sol.cronograma_url && (
-                  <a 
-                    href={`http://localhost:5000/${sol.cronograma_url.startsWith('/') ? sol.cronograma_url.slice(1) : sol.cronograma_url}`} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="text-xs text-slate-600 hover:text-[#5B9BD5] font-semibold flex items-center gap-2 transition-colors"
-                  >
-                    📅 Cronograma.pdf
-                  </a>
-                )}
-
-                {sol.honestidad_url && (
-                  <a 
-                    href={`http://localhost:5000/${sol.honestidad_url.startsWith('/') ? sol.honestidad_url.slice(1) : sol.honestidad_url}`} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="text-xs text-slate-600 hover:text-[#5B9BD5] font-semibold flex items-center gap-2 transition-colors"
-                  >
-                    ✍️ Honestidad.pdf
-                  </a>
-                )}
-
-                {sol.id_url && (
-                  <a 
-                    href={`http://localhost:5000/${sol.id_url.startsWith('/') ? sol.id_url.slice(1) : sol.id_url}`} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="text-xs text-slate-600 hover:text-[#5B9BD5] font-semibold flex items-center gap-2 transition-colors"
-                  >
-                    🆔 Identificación.pdf
-                  </a>
-                )}
+                {[
+                  ['Presupuesto', sol.presupuesto || sol.presupuesto_url],
+                  ['Cronograma', sol.cronograma || sol.cronograma_url],
+                  ['Honestidad', sol.honestidad || sol.honestidad_url],
+                  ['Identidad', sol.id_documento || sol.id_url]
+                ].filter(([, url]) => url).map(([tipo, url]) => <button key={tipo} type="button" onClick={() => previsualizarDocumento(url)} className="text-xs text-slate-600 hover:text-[#5B9BD5] font-semibold text-left">{tipo} · vista previa</button>)}
               </div>
             </div>
           ))}

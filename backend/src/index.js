@@ -8,6 +8,7 @@ const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
 
 const Usuario = require('./models/usuarioModel');
+const { procesarBajasVencidas } = require('./controllers/settingsController');
 const {
   PUBLIC_DIR
 } = require('./config/uploadPaths');
@@ -1298,11 +1299,29 @@ const PORT =
     process.env.PORT
   ) || 5000;
 
+const programarAnonimizacionDeCuentas = () => {
+  const procesar = async () => {
+    try {
+      const total = await procesarBajasVencidas();
+      if (total > 0) {
+        console.info(`Se anonimizaron ${total} cuentas vencidas; los expedientes institucionales se conservaron.`);
+      }
+    } catch (error) {
+      console.error('No fue posible procesar las bajas vencidas:', error.code || 'error interno');
+    }
+  };
+
+  void procesar();
+  const intervalo = setInterval(() => void procesar(), 24 * 60 * 60 * 1000);
+  intervalo.unref();
+};
+
 server.listen(
   PORT,
   () => {
     console.log(
       `Servidor ArchiveX híbrido (HTTP + WebSockets) corriendo en puerto ${PORT}`
     );
+    programarAnonimizacionDeCuentas();
   }
 );

@@ -14,18 +14,27 @@ export default function NotificationBell({ onNavigate }) {
     } catch { /* El panel sigue disponible aunque falle una consulta secundaria. */ }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const interval = window.setInterval(load, 60000);
+    return () => window.clearInterval(interval);
+  }, []);
   const unread = items.filter((item) => !item.read_at).length;
 
   const openItem = async (item) => {
     try { await fetch(`${API_URL}/settings/notifications/${item.id}/read`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}` } }); } catch { /* noop */ }
     setItems(items.map((row) => row.id === item.id ? { ...row, read_at: new Date().toISOString() } : row));
-    if (item.link === '/mis-solicitudes') onNavigate('mis_solicitudes');
+    const vistas = {
+      '/mis-solicitudes': 'mis_solicitudes',
+      '/evaluar_propuestas': 'evaluar_propuestas',
+      '/convocatorias_abiertas': 'convocatorias_abiertas'
+    };
+    if (vistas[item.link]) onNavigate(vistas[item.link]);
     setOpen(false);
   };
 
   return <div className="relative">
-    <button onClick={() => { setOpen(!open); if (!open) load(); }} className="relative p-2 rounded-xl hover:bg-slate-100" title="Notificaciones">🔔
+    <button type="button" onClick={() => { setOpen(!open); if (!open) load(); }} className="relative p-2 rounded-xl hover:bg-slate-100" title="Notificaciones" aria-label={`Notificaciones${unread ? `, ${unread} sin leer` : ''}`}>🔔
       {unread > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] min-w-4 h-4 rounded-full grid place-items-center">{unread > 9 ? '9+' : unread}</span>}
     </button>
     {open && <div className="absolute right-0 mt-2 w-80 max-h-96 overflow-auto bg-white rounded-2xl shadow-xl border border-slate-100 p-2 z-30">

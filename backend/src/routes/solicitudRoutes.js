@@ -8,6 +8,9 @@ const solicitudController =
 const verificarToken =
   require('../middleware/authMiddleware');
 
+const { requireRole } =
+  require('../middleware/roleMiddleware');
+
 const upload =
   require('../middleware/uploadMiddleware');
 
@@ -153,6 +156,26 @@ router.get(
   '/mis-solicitudes',
   verificarToken,
   solicitudController.getMisSolicitudes
+);
+
+router.get(
+  '/:id/cronologia',
+  verificarToken,
+  solicitudController.getSolicitudTimeline
+);
+
+router.patch(
+  '/:id/documentos/:docId/revision',
+  verificarToken,
+  requireRole('Admin', 'Administrador'),
+  solicitudController.reviewDocument
+);
+
+router.post(
+  '/:id/documentos/:docId/comentarios',
+  verificarToken,
+  requireRole('Evaluador'),
+  solicitudController.commentDocument
 );
 
 // ------------------------------------------------------------

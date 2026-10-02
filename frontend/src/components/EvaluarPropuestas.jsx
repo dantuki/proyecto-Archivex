@@ -203,6 +203,11 @@ const EvaluarPropuestas = ({
     setMensajeExito
   ] = useState('');
 
+  const [documentosPorSolicitud, setDocumentosPorSolicitud] = useState({});
+  const [panelComentarios, setPanelComentarios] = useState(null);
+  const [borradoresComentario, setBorradoresComentario] = useState({});
+  const [errorComentario, setErrorComentario] = useState('');
+
   useEffect(
     () => {
       if (usuario?.id) {
@@ -285,6 +290,60 @@ const EvaluarPropuestas = ({
         );
       }
     };
+
+  const alternarComentariosDocumento = async (solicitudId) => {
+    setErrorComentario('');
+    if (panelComentarios === solicitudId) {
+      setPanelComentarios(null);
+      return;
+    }
+    setPanelComentarios(solicitudId);
+    if (documentosPorSolicitud[solicitudId]) return;
+    try {
+      const response = await fetch(`${API_BASE}/solicitudes/${solicitudId}/cronologia`, {
+        headers: { Authorization: `Bearer ${obtenerToken()}` }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'No se pudieron cargar los comentarios.');
+      setDocumentosPorSolicitud((current) => ({ ...current, [solicitudId]: data.data }));
+    } catch (requestError) {
+      setErrorComentario(requestError.message);
+    }
+  };
+
+  const guardarComentarioDocumento = async (asignacion, documento) => {
+    const comment = String(borradoresComentario[documento.id] || '').trim();
+    if (!comment) {
+      setErrorComentario('Escribe un comentario antes de enviarlo.');
+      return;
+    }
+    setErrorComentario('');
+    try {
+      const response = await fetch(
+        `${API_BASE}/solicitudes/${asignacion.solicitud_id}/documentos/${documento.id}/comentarios`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${obtenerToken()}`
+          },
+          body: JSON.stringify({ comment })
+        }
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'No se pudo guardar el comentario.');
+      setBorradoresComentario((current) => ({ ...current, [documento.id]: '' }));
+      const responseTimeline = await fetch(`${API_BASE}/solicitudes/${asignacion.solicitud_id}/cronologia`, {
+        headers: { Authorization: `Bearer ${obtenerToken()}` }
+      });
+      if (responseTimeline.ok) {
+        const timeline = await responseTimeline.json();
+        setDocumentosPorSolicitud((current) => ({ ...current, [asignacion.solicitud_id]: timeline.data }));
+      }
+    } catch (requestError) {
+      setErrorComentario(requestError.message);
+    }
+  };
 
   const abrirCalificacion =
     (propuesta) => {
@@ -596,6 +655,10 @@ const EvaluarPropuestas = ({
                     }
                   </p>
 
+                  <p className={`mb-3 text-xs font-semibold ${new Date(asig.fecha_limite) < new Date() && asig.estado_evaluacion !== 'Finalizado' ? 'text-red-700' : 'text-slate-500'}`}>
+                    Fecha límite: {asig.fecha_limite ? new Date(asig.fecha_limite).toLocaleDateString() : 'No disponible'}
+                  </p>
+
                   <div className="flex flex-wrap gap-2 mb-4 bg-slate-50/50 p-3 rounded-xl border border-slate-100">
                     <span className="w-full text-[10px] font-extrabold uppercase text-slate-400 tracking-wider mb-1 block">
                       Documentación del Proyecto:
@@ -653,6 +716,34 @@ const EvaluarPropuestas = ({
                       </button>
                     )}
                   </div>
+
+                  <button type="button" onClick={() => alternarComentariosDocumento(asig.solicitud_id)} className="mb-3 text-xs font-semibold text-blue-700 hover:underline">
+                    {panelComentarios === asig.solicitud_id ? 'Ocultar comentarios por documento' : 'Comentarios por documento'}
+                  </button>
+
+                  {errorComentario && panelComentarios === asig.solicitud_id && <p className="mb-2 text-xs text-red-600">{errorComentario}</p>}
+
+                  {panelComentarios === asig.solicitud_id && <div className="mb-4 space-y-3">
+                    {(documentosPorSolicitud[asig.solicitud_id]?.documents || []).filter((documento) => documento.review_status !== 'replaced').map((documento) => {
+                      const comentariosDocumento = (documentosPorSolicitud[asig.solicitud_id]?.comments || [])
+                        .filter((item) => item.documento_id === documento.id);
+                      return <div key={documento.id} className="rounded-xl border border-slate-200 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs font-bold text-slate-800">{documento.tipo_documento} · v{documento.version_no} · {documento.review_status === 'validated' ? 'Validado' : documento.review_status === 'rejected' ? 'Corrección solicitada' : 'Pendiente'}</p>
+                          <button type="button" onClick={() => descargarDocumento(documento.archivo_url)} className="text-xs font-semibold text-blue-700 underline">Vista previa</button>
+                        </div>
+                        <div className="my-2 space-y-1">
+                          {comentariosDocumento.map((item) => <p key={item.id} className="rounded bg-slate-50 p-2 text-xs text-slate-600"><strong>{item.autor || 'Evaluador'} · {new Date(item.created_at).toLocaleString()}:</strong> {item.comentario}</p>)}
+                          {documento.review_comment && <p className="rounded bg-amber-50 p-2 text-xs text-amber-800">Revisión administrativa: {documento.review_comment}</p>}
+                        </div>
+                        <div className="flex gap-2">
+                          <textarea maxLength={5000} value={borradoresComentario[documento.id] || ''} onChange={(event) => setBorradoresComentario({ ...borradoresComentario, [documento.id]: event.target.value })} placeholder="Comentario para el propietario" className="min-h-16 flex-1 rounded-lg border border-slate-200 p-2 text-xs" />
+                          <button type="button" onClick={() => guardarComentarioDocumento(asig, documento)} className="self-end rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white">Enviar</button>
+                        </div>
+                      </div>;
+                    })}
+                    {!(documentosPorSolicitud[asig.solicitud_id]?.documents || []).some((documento) => documento.review_status !== 'replaced') && <p className="text-xs text-slate-500">No hay documentos indexados.</p>}
+                  </div>}
 
                   {asig.estado_evaluacion ===
                     'Finalizado' && (

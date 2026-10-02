@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+html[data-text-scale="compact"] {
+  font-size: 14px;
+}
+
+html[data-text-scale="normal"] {
+  font-size: 16px;
+}
+
 @theme {
   --animate-fade-in: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 

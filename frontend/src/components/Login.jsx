@@ -56,6 +56,8 @@ export default function AuthContainer({
     const currentUrl = new URL(window.location.href);
     const resetToken = currentUrl.searchParams.get('reset-token');
     const verifyToken = currentUrl.searchParams.get('verify-token');
+    const emailChangeToken = currentUrl.searchParams.get('email-change-token');
+    const deletionToken = currentUrl.searchParams.get('delete-account-token');
 
     if (resetToken) {
       setFlowToken(resetToken);
@@ -65,9 +67,17 @@ export default function AuthContainer({
       setFlowToken(verifyToken);
       setAuthFlow('verify');
       currentUrl.searchParams.delete('verify-token');
+    } else if (emailChangeToken) {
+      setFlowToken(emailChangeToken);
+      setAuthFlow('confirm-email-change');
+      currentUrl.searchParams.delete('email-change-token');
+    } else if (deletionToken) {
+      setFlowToken(deletionToken);
+      setAuthFlow('confirm-deletion');
+      currentUrl.searchParams.delete('delete-account-token');
     }
 
-    if (resetToken || verifyToken) {
+    if (resetToken || verifyToken || emailChangeToken || deletionToken) {
       window.history.replaceState(
         {},
         document.title,
@@ -505,6 +515,30 @@ export default function AuthContainer({
     }
   };
 
+  const handleConfirmAccountAction = async () => {
+    setError('');
+    setMensajeExito('');
+    const isDeletion = authFlow === 'confirm-deletion';
+    const endpoint = isDeletion
+      ? 'http://localhost:5000/api/settings/account/deletion-confirm'
+      : 'http://localhost:5000/api/settings/email/confirm';
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: flowToken })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'No se pudo confirmar la solicitud.');
+      setMensajeExito(data.message);
+      setFlowToken('');
+      setAuthFlow(isDeletion ? 'deletion-success' : 'email-change-success');
+    } catch (requestError) {
+      setError(requestError.message || 'No se pudo conectar con el servidor.');
+    }
+  };
+
   const handleResendVerification = async (e) => {
     e.preventDefault();
     setError('');
@@ -707,19 +741,39 @@ export default function AuthContainer({
                 </>
               )}
 
-              {(authFlow === 'reset-success' || authFlow === 'verify-success') && (
+              {(authFlow === 'confirm-email-change' || authFlow === 'confirm-deletion') && (
                 <>
                   <div className="space-y-1.5">
                     <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-                      {authFlow === 'reset-success' ? 'Contraseña actualizada' : 'Correo verificado'}
+                      {authFlow === 'confirm-deletion' ? 'Confirmar eliminación de cuenta' : 'Confirmar nuevo correo'}
                     </h1>
                     <p className="text-xs text-slate-500 leading-relaxed">
-                      Ya puedes volver al inicio de sesión.
+                      {authFlow === 'confirm-deletion'
+                        ? 'Confirma para desactivar el acceso y programar la anonimización en 30 días. Tus expedientes se conservarán.'
+                        : 'Confirma para actualizar el correo asociado a tu cuenta.'}
                     </p>
                   </div>
-                  <button type="button" onClick={() => volverAlLogin(true)} className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm rounded-xl transition-all duration-150 shadow-sm">
-                    Ir al inicio de sesión
+                  <button type="button" onClick={handleConfirmAccountAction} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm rounded-xl transition-all duration-150 shadow-sm">
+                    Confirmar
                   </button>
+                </>
+              )}
+
+              {(authFlow === 'reset-success' || authFlow === 'verify-success' || authFlow === 'email-change-success' || authFlow === 'deletion-success') && (
+                <>
+                  <div className="space-y-1.5">
+                    <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+                      {authFlow === 'reset-success' ? 'Contraseña actualizada'
+                        : authFlow === 'verify-success' ? 'Correo verificado'
+                          : authFlow === 'email-change-success' ? 'Correo actualizado' : 'Solicitud confirmada'}
+                    </h1>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      {authFlow === 'deletion-success' ? 'Se cerraron las sesiones de la cuenta; los expedientes institucionales se conservarán.' : 'Ya puedes volver al inicio de sesión.'}
+                    </p>
+                  </div>
+                  {authFlow !== 'deletion-success' && <button type="button" onClick={() => volverAlLogin(true)} className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm rounded-xl transition-all duration-150 shadow-sm">
+                    Ir al inicio de sesión
+                  </button>}
                 </>
               )}
             </div>

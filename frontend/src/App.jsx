@@ -94,17 +94,50 @@ function App() {
     () => localStorage.getItem('archivex-theme') || 'system'
   );
 
+  const [textScale, setTextScale] = useState(
+    () => localStorage.getItem('archivex-text-scale') || 'normal'
+  );
+
   const aplicarTema = (nuevoTema) => {
-    const darkSystem = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const dark = nuevoTema === 'dark' || (nuevoTema === 'system' && darkSystem);
-    document.documentElement.classList.toggle('dark', dark);
     localStorage.setItem('archivex-theme', nuevoTema);
     setTheme(nuevoTema);
   };
 
+  const aplicarEscalaTexto = (nuevaEscala) => {
+    const escala = nuevaEscala === 'compact' ? 'compact' : 'normal';
+    localStorage.setItem('archivex-text-scale', escala);
+    document.documentElement.dataset.textScale = escala;
+    setTextScale(escala);
+  };
+
   useEffect(() => {
-    aplicarTema(theme);
-  }, []);
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const aplicar = () => {
+      const dark = theme === 'dark' || (theme === 'system' && media.matches);
+      document.documentElement.classList.toggle('dark', dark);
+    };
+    aplicar();
+    media.addEventListener('change', aplicar);
+    return () => media.removeEventListener('change', aplicar);
+  }, [theme]);
+
+  useEffect(() => {
+    document.documentElement.dataset.textScale = textScale;
+  }, [textScale]);
+
+  useEffect(() => {
+    if (!usuario) return;
+    const token = localStorage.getItem('token');
+    fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/settings/preferences`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((preferences) => {
+        if (preferences?.theme) aplicarTema(preferences.theme);
+        if (preferences?.text_scale) aplicarEscalaTexto(preferences.text_scale);
+      })
+      .catch(() => {});
+  }, [usuario]);
 
   // ==========================================================
   // ROL DEL USUARIO
@@ -444,7 +477,10 @@ function App() {
             <Settings
               theme={theme}
               onThemeChange={aplicarTema}
+              onTextScaleChange={aplicarEscalaTexto}
               onLogout={handleLogout}
+              onNavigate={cambiarVistaLimpia}
+              usuario={usuario}
             />
           );
 

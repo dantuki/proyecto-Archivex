@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 const Asignacion = require('../models/asignacionModel');
+const { crearNotificacion } = require('./settingsController');
 
 const {
   PRIVATE_DIR
@@ -372,6 +373,18 @@ const asignarEvaluador = async (
 
     const id =
       await Asignacion.create(req.body);
+
+    const asignacion = await Asignacion.getById(id);
+    if (asignacion) {
+      await crearNotificacion({
+        usuarioId: asignacion.evaluador_id,
+        type: 'assignment',
+        title: 'Nueva evaluación asignada',
+        body: `Tienes asignada la evaluación de "${asignacion.titulo_propuesta}".`,
+        link: '/evaluar_propuestas',
+        eventKey: `assignment:${id}`
+      });
+    }
 
     return res.status(201).json({
       status: 'success',

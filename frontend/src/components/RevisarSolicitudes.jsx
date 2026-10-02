@@ -213,6 +213,11 @@ function FilaSolicitud({
     false
   );
 
+  const [documentos, setDocumentos] = useState([]);
+  const [mostrarDocumentos, setMostrarDocumentos] = useState(false);
+  const [comentariosDocumento, setComentariosDocumento] = useState({});
+  const [errorDocumento, setErrorDocumento] = useState('');
+
   useEffect(() => {
     setNuevoEstado(
       sol.estado
@@ -280,6 +285,49 @@ function FilaSolicitud({
         );
       }
     };
+
+  const cargarDocumentos = async () => {
+    setErrorDocumento('');
+    if (mostrarDocumentos) {
+      setMostrarDocumentos(false);
+      return;
+    }
+    try {
+      const response = await fetch(`${API_BASE}/solicitudes/${sol.id}/cronologia`, {
+        headers: { Authorization: `Bearer ${obtenerToken()}` }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'No fue posible cargar documentos.');
+      setDocumentos(data.data.documents || []);
+      setMostrarDocumentos(true);
+    } catch (error) {
+      setErrorDocumento(error.message);
+    }
+  };
+
+  const revisarDocumento = async (documento, status) => {
+    setErrorDocumento('');
+    try {
+      const response = await fetch(
+        `${API_BASE}/solicitudes/${sol.id}/documentos/${documento.id}/revision`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${obtenerToken()}`
+          },
+          body: JSON.stringify({ status, comment: comentariosDocumento[documento.id] || '' })
+        }
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'No fue posible guardar la revisión.');
+      setDocumentos(documentos.map((item) => item.id === documento.id
+        ? { ...item, review_status: status, review_comment: comentariosDocumento[documento.id] || '' }
+        : item));
+    } catch (error) {
+      setErrorDocumento(error.message);
+    }
+  };
 
   const handleCancelarAccion =
     () => {
@@ -677,6 +725,31 @@ function FilaSolicitud({
             </button>
           )}
         </div>
+        <button type="button" onClick={cargarDocumentos} className="mt-2 text-[10px] font-bold text-blue-700 hover:underline">
+          {mostrarDocumentos ? 'Ocultar revisión documental' : 'Revisar documentos y versiones'}
+        </button>
+        {errorDocumento && <p className="mt-2 text-[10px] text-red-600">{errorDocumento}</p>}
+        {mostrarDocumentos && <div className="mt-2 space-y-2 min-w-[280px]">
+          {documentos.map((documento) => <div key={documento.id} className="rounded-lg border border-slate-200 bg-white p-2 text-left">
+            <div className="flex items-center justify-between gap-2 text-[10px]">
+              <strong>{documento.tipo_documento} · v{documento.version_no}</strong>
+              <span>{documento.review_status === 'validated' ? 'Validado' : documento.review_status === 'rejected' ? 'Requiere corrección' : documento.review_status === 'replaced' ? 'Reemplazado' : 'Pendiente'}</span>
+            </div>
+            <button type="button" onClick={() => descargarDocumento(documento.archivo_url)} className="my-1 text-[10px] text-blue-700 underline">Vista previa del PDF</button>
+            {documento.review_status !== 'replaced' && <>
+              <textarea value={comentariosDocumento[documento.id] ?? documento.review_comment ?? ''}
+                onChange={(event) => setComentariosDocumento({ ...comentariosDocumento, [documento.id]: event.target.value })}
+                placeholder="Comentario para el propietario" maxLength={5000}
+                className="w-full rounded border border-slate-200 p-2 text-[10px]" />
+              <div className="flex gap-2 mt-1">
+                <button type="button" onClick={() => revisarDocumento(documento, 'validated')} className="rounded bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white">Validar</button>
+                <button type="button" onClick={() => revisarDocumento(documento, 'rejected')} className="rounded bg-red-600 px-2 py-1 text-[10px] font-bold text-white">Solicitar corrección</button>
+              </div>
+            </>}
+            {documento.review_comment && <p className="mt-1 text-[10px] text-slate-500">{documento.review_comment}</p>}
+          </div>)}
+          {!documentos.length && <p className="text-[10px] text-slate-500">No hay documentos indexados.</p>}
+        </div>}
       </td>
 
       <td className="py-5 px-6">
@@ -697,6 +770,10 @@ function FilaSolicitud({
 
             <option value="En Evaluación">
               🔍 En Evaluación
+            </option>
+
+            <option value="Correcciones solicitadas">
+              📝 Correcciones solicitadas
             </option>
 
             <option value="Aprobado">

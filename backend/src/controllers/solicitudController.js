@@ -30,6 +30,7 @@ const ESTADOS_VALIDOS = [
   'Borrador',
   'Radicado',
   'En Evaluación',
+  'Correcciones solicitadas',
   'Aprobado',
   'Rechazado'
 ];
@@ -925,6 +926,175 @@ const getSolicitudById = async (
   }
 };
 
+const getSolicitudTimeline = async (req, res) => {
+  try {
+    const id = obtenerIdNumerico(req.params.id);
+    const usuarioId = obtenerUsuarioAutenticadoId(req);
+    if (!id || !usuarioId) {
+      return res.status(400).json({ status: 'error', message: 'La solicitud o usuario no es válido.' });
+    }
+
+    const [solicitudes] = await db.query(
+      `SELECT s.usuario_id, s.estado FROM solicitudes s WHERE s.id = ? LIMIT 1`,
+      [id]
+    );
+    const solicitud = solicitudes[0];
+    if (!solicitud) return res.status(404).json({ status: 'error', message: 'Solicitud no encontrada.' });
+
+    const esDuenio = String(solicitud.usuario_id) === String(usuarioId);
+    const esEvaluador = obtenerRol(req) === 'evaluador';
+    let evaluadorAsignado = false;
+    if (esEvaluador) {
+      const [assignments] = await db.query(
+        `SELECT id FROM asignacion_evaluaciones WHERE solicitud_id = ? AND evaluador_id = ? LIMIT 1`,
+        [id, usuarioId]
+      );
+      evaluadorAsignado = assignments.length > 0;
+    }
+    if (!esDuenio && !esAdminUser(req) && !evaluadorAsignado) {
+      return res.status(403).json({ status: 'error', message: 'No tienes permiso para ver esta cronología.' });
+    }
+
+    const [timeline] = await db.query(
+      `SELECT t.id, t.estado_anterior, t.estado_nuevo, t.motivo_cambio,
+              t.fecha_cambio, u.nombre_completo AS responsable
+       FROM trazabilidad_solicitudes t
+       LEFT JOIN usuarios u ON u.id = t.usuario_id
+       WHERE t.solicitud_id = ? ORDER BY t.fecha_cambio ASC, t.id ASC`,
+      [id]
+    );
+    const [documents] = await db.query(
+      `SELECT id, nombre_archivo, tipo_documento, archivo_url, review_status,
+              review_comment, reviewed_at, version_no, replaced_by, created_at
+       FROM documentos_solicitud WHERE solicitud_id = ?
+       ORDER BY tipo_documento, version_no DESC`,
+      [id]
+    );
+    const [comments] = await db.query(
+      `SELECT dc.id, dc.documento_id, dc.comentario, dc.created_at,
+              u.nombre_completo AS autor
+       FROM document_comments dc
+       LEFT JOIN usuarios u ON u.id = dc.usuario_id
+       INNER JOIN documentos_solicitud d ON d.id = dc.documento_id
+       WHERE d.solicitud_id = ? ORDER BY dc.created_at ASC, dc.id ASC`,
+      [id]
+    );
+
+    return res.json({ status: 'success', data: { estado: solicitud.estado, timeline, documents, comments } });
+  } catch (error) {
+    console.error('Error consultando cronología de solicitud:', error.code || 'error interno');
+    return res.status(500).json({ status: 'error', message: 'No fue posible cargar la cronología.' });
+  }
+};
+
+const commentDocument = async (req, res) => {
+  const solicitudId = obtenerIdNumerico(req.params.id);
+  const documentId = obtenerIdNumerico(req.params.docId);
+  const comment = normalizarTexto(req.body?.comment);
+  const usuarioId = obtenerUsuarioAutenticadoId(req);
+  if (!solicitudId || !documentId || !usuarioId || !comment || comment.length > 5000) {
+    return res.status(400).json({ status: 'error', message: 'El comentario debe tener entre 1 y 5000 caracteres.' });
+  }
+
+  try {
+    const [rows] = await db.query(
+      `SELECT d.id, s.usuario_id, s.titulo_propuesta
+       FROM documentos_solicitud d
+       INNER JOIN solicitudes s ON s.id = d.solicitud_id
+       INNER JOIN asignacion_evaluaciones ae ON ae.solicitud_id = s.id
+       WHERE d.id = ? AND d.solicitud_id = ? AND ae.evaluador_id = ?
+       LIMIT 1`,
+      [documentId, solicitudId, usuarioId]
+    );
+    const document = rows[0];
+    if (!document) return res.status(403).json({ status: 'error', message: 'No tienes una asignación para comentar este documento.' });
+
+    const [result] = await db.query(
+      'INSERT INTO document_comments (documento_id, usuario_id, comentario) VALUES (?, ?, ?)',
+      [documentId, usuarioId, comment]
+    );
+    await crearNotificacion({
+      usuarioId: document.usuario_id,
+      type: 'comment',
+      title: 'Nuevo comentario sobre un documento',
+      body: `La evaluación de "${document.titulo_propuesta}" incluye un comentario: ${comment}`,
+      link: '/mis-solicitudes',
+      eventKey: `document-comment:${result.insertId}`
+    });
+    return res.status(201).json({ status: 'success', message: 'Comentario guardado.' });
+  } catch (error) {
+    console.error('Error guardando comentario de documento:', error.code || 'error interno');
+    return res.status(500).json({ status: 'error', message: 'No fue posible guardar el comentario.' });
+  }
+};
+
+const reviewDocument = async (req, res) => {
+  const solicitudId = obtenerIdNumerico(req.params.id);
+  const documentId = obtenerIdNumerico(req.params.docId);
+  const status = String(req.body?.status || '');
+  const comment = normalizarTexto(req.body?.comment);
+
+  if (!solicitudId || !documentId || !['validated', 'rejected'].includes(status)) {
+    return res.status(400).json({ status: 'error', message: 'Los datos de revisión no son válidos.' });
+  }
+  if (comment && comment.length > 5000) {
+    return res.status(400).json({ status: 'error', message: 'El comentario supera el límite permitido.' });
+  }
+  if (status === 'rejected' && !comment) {
+    return res.status(400).json({ status: 'error', message: 'Escribe el motivo de la corrección solicitada.' });
+  }
+
+  try {
+    const [documents] = await db.query(
+      `SELECT d.id, d.solicitud_id, d.review_status, s.usuario_id, s.titulo_propuesta
+       FROM documentos_solicitud d INNER JOIN solicitudes s ON s.id = d.solicitud_id
+       WHERE d.id = ? AND d.solicitud_id = ? LIMIT 1`,
+      [documentId, solicitudId]
+    );
+    const document = documents[0];
+    if (!document) return res.status(404).json({ status: 'error', message: 'No se encontró el documento.' });
+    if (document.review_status === 'replaced') {
+      return res.status(409).json({ status: 'error', message: 'No se puede revisar una versión reemplazada.' });
+    }
+
+    await db.query(
+      `UPDATE documentos_solicitud SET review_status = ?, review_comment = ?,
+       reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [status, comment, obtenerUsuarioAutenticadoId(req), documentId]
+    );
+
+    if (status === 'rejected') {
+      const [rows] = await db.query('SELECT estado FROM solicitudes WHERE id = ? LIMIT 1', [solicitudId]);
+      const previousState = rows[0]?.estado;
+      await db.query(
+        `UPDATE solicitudes SET estado = 'Correcciones solicitadas', motivo_decision = ? WHERE id = ?`,
+        [comment || 'Un documento requiere correcciones.', solicitudId]
+      );
+      await Trazabilidad.registrarCambio({
+        solicitud_id: solicitudId,
+        usuario_id: obtenerUsuarioAutenticadoId(req),
+        estado_anterior: previousState,
+        estado_nuevo: 'Correcciones solicitadas',
+        motivo_cambio: comment || 'Un documento requiere correcciones.'
+      });
+    }
+
+    await crearNotificacion({
+      usuarioId: document.usuario_id,
+      type: 'comment',
+      title: status === 'rejected' ? 'Documento requiere correcciones' : 'Documento validado',
+      body: `${document.titulo_propuesta}: ${comment || (status === 'rejected' ? 'Se requiere revisar este documento.' : 'El documento fue validado.')}`,
+      link: '/mis-solicitudes',
+      eventKey: `document:${documentId}:${status}:${Date.now()}`
+    });
+
+    return res.json({ status: 'success', message: 'Revisión del documento guardada.' });
+  } catch (error) {
+    console.error('Error revisando documento:', error.code || 'error interno');
+    return res.status(500).json({ status: 'error', message: 'No fue posible guardar la revisión.' });
+  }
+};
+
 // ============================================================
 // CREAR SOLICITUD
 // ============================================================
@@ -1742,10 +1912,7 @@ const updateSolicitud = async (
     // MOTIVO DE DECISIÓN
     // --------------------------------------------------------
 
-    if (
-      estado !==
-      'Rechazado'
-    ) {
+    if (!['Rechazado', 'Correcciones solicitadas'].includes(estado)) {
       motivo_decision =
         null;
     } else {
@@ -1771,6 +1938,13 @@ const updateSolicitud = async (
             'error',
           message:
             'El motivo de decisión no puede superar los 5000 caracteres.'
+        });
+      }
+
+      if (estado === 'Correcciones solicitadas' && !motivo_decision) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Indica qué correcciones debe realizar el propietario.'
         });
       }
     }
@@ -1806,48 +1980,6 @@ const updateSolicitud = async (
         : solicitudPrevia.id_url ||
           solicitudPrevia.id_documento ||
           null;
-
-    // --------------------------------------------------------
-    // ARCHIVOS ANTERIORES QUE SERÁN REEMPLAZADOS
-    // --------------------------------------------------------
-
-    const archivosAReemplazar = [];
-
-    if (
-      req.files?.presupuesto?.[0] &&
-      solicitudPrevia.presupuesto_url
-    ) {
-      archivosAReemplazar.push(
-        solicitudPrevia.presupuesto_url
-      );
-    }
-
-    if (
-      req.files?.cronograma?.[0] &&
-      solicitudPrevia.cronograma_url
-    ) {
-      archivosAReemplazar.push(
-        solicitudPrevia.cronograma_url
-      );
-    }
-
-    if (
-      req.files?.honestidad?.[0] &&
-      solicitudPrevia.honestidad_url
-    ) {
-      archivosAReemplazar.push(
-        solicitudPrevia.honestidad_url
-      );
-    }
-
-    if (
-      req.files?.identidad?.[0] &&
-      solicitudPrevia.id_url
-    ) {
-      archivosAReemplazar.push(
-        solicitudPrevia.id_url
-      );
-    }
 
     // --------------------------------------------------------
     // ACTUALIZAR SOLICITUD
@@ -1912,9 +2044,10 @@ const updateSolicitud = async (
           solicitud_id,
           nombre_archivo,
           tipo_documento,
-          archivo_url
+          archivo_url,
+          version_no
         )
-        VALUES (?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?)
       `;
 
       for (
@@ -1928,18 +2061,50 @@ const updateSolicitud = async (
           continue;
         }
 
-        const file =
-          item.file;
-
-        await db.query(
+        const file = item.file;
+        const [versionRows] = await db.query(
+          `SELECT id, version_no FROM documentos_solicitud
+           WHERE solicitud_id = ? AND tipo_documento = ? AND review_status <> 'replaced'
+           ORDER BY version_no DESC LIMIT 1`,
+          [id, item.tipo]
+        );
+        let previousDocument = versionRows[0];
+        if (!previousDocument) {
+          const legacyPaths = {
+            Presupuesto: solicitudPrevia.presupuesto_url || solicitudPrevia.presupuesto,
+            Cronograma: solicitudPrevia.cronograma_url || solicitudPrevia.cronograma,
+            Honestidad: solicitudPrevia.honestidad_url || solicitudPrevia.honestidad,
+            Identidad: solicitudPrevia.id_url || solicitudPrevia.id_documento
+          };
+          const legacyPath = legacyPaths[item.tipo];
+          if (legacyPath) {
+            const [legacyResult] = await db.query(
+              `INSERT INTO documentos_solicitud
+               (solicitud_id, nombre_archivo, tipo_documento, archivo_url, review_status, version_no)
+               VALUES (?, ?, ?, ?, 'replaced', 1)`,
+              [id, String(legacyPath).split('/').pop(), item.tipo, legacyPath]
+            );
+            previousDocument = { id: legacyResult.insertId, version_no: 1 };
+          }
+        }
+        const versionNo = Number(previousDocument?.version_no || 0) + 1;
+        const [insertResult] = await db.query(
           queryDoc,
           [
             id,
             file.originalname,
             item.tipo,
-            `/uploads_private/${file.filename}`
+            `/uploads_private/${file.filename}`,
+            versionNo
           ]
         );
+        if (previousDocument) {
+          await db.query(
+            `UPDATE documentos_solicitud
+             SET review_status = 'replaced', replaced_by = ? WHERE id = ?`,
+            [insertResult.insertId, previousDocument.id]
+          );
+        }
       }
     }
 
@@ -1972,24 +2137,12 @@ const updateSolicitud = async (
 
       await crearNotificacion({
         usuarioId: solicitudPrevia.usuario_id,
-        type: 'solicitud',
+        type: 'comment',
         title: 'Tu solicitud cambió de estado',
         body: `La solicitud "${solicitudPrevia.titulo_propuesta}" ahora está: ${estado}.`,
-        link: '/mis-solicitudes'
+        link: '/mis-solicitudes',
+        eventKey: `solicitud:${id}:estado:${estado}:${Date.now()}`
       });
-    }
-
-    // --------------------------------------------------------
-    // LIMPIAR ARCHIVOS REEMPLAZADOS
-    // --------------------------------------------------------
-
-    if (
-      archivosAReemplazar.length >
-      0
-    ) {
-      await eliminarArchivosPrivados(
-        archivosAReemplazar
-      );
     }
 
     return res.status(200).json({
@@ -2164,6 +2317,9 @@ module.exports = {
   getSolicitudes,
   getMisSolicitudes,
   getSolicitudById,
+  getSolicitudTimeline,
+  reviewDocument,
+  commentDocument,
   createSolicitud,
   updateSolicitud,
   deleteSolicitud

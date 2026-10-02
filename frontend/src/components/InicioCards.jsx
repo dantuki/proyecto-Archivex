@@ -1,8 +1,79 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 const InicioCards = ({ cambiarVista, usuario }) => {
-  const esAdmin = usuario?.rol === 'Admin';
-  const esEvaluador = usuario?.rol === 'Evaluador';
+  const rolNormalizado = String(usuario?.rol || '').trim().toLowerCase();
+  const esAdmin = rolNormalizado === 'admin' || rolNormalizado === 'administrador';
+  const esEvaluador = rolNormalizado === 'evaluador';
+  const [metricas, setMetricas] = useState([]);
+
+  useEffect(() => {
+    const cargarMetricas = async () => {
+      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+      const headers = { Authorization: `Bearer ${token}` };
+      const solicitar = async (ruta) => {
+        const response = await fetch(`${API_URL}${ruta}`, { headers });
+        if (!response.ok) throw new Error('No se pudieron cargar las métricas.');
+        const payload = await response.json();
+        return payload.data || payload;
+      };
+
+      try {
+        if (esEvaluador) {
+          const asignaciones = await solicitar(`/asignaciones/evaluador/${usuario.id}`);
+          const filas = Array.isArray(asignaciones) ? asignaciones : [];
+          setMetricas([
+            ['Asignadas', filas.length],
+            ['Pendientes', filas.filter((fila) => fila.estado_evaluacion !== 'Finalizado').length],
+            ['Vencidas', filas.filter((fila) => fila.estado_evaluacion !== 'Finalizado' && new Date(fila.fecha_limite) < new Date()).length],
+            ['Completadas', filas.filter((fila) => fila.estado_evaluacion === 'Finalizado').length]
+          ]);
+          return;
+        }
+
+        const [solicitudesResult, convocatoriasResult] = await Promise.allSettled([
+          solicitar('/solicitudes'), solicitar('/convocatorias')
+        ]);
+        const solicitudes = solicitudesResult.status === 'fulfilled' && Array.isArray(solicitudesResult.value)
+          ? solicitudesResult.value : [];
+        const convocatorias = convocatoriasResult.status === 'fulfilled' && Array.isArray(convocatoriasResult.value)
+          ? convocatoriasResult.value : [];
+        const activas = convocatorias.filter((convocatoria) => new Date(convocatoria.fecha_cierre) > new Date());
+
+        if (esAdmin) {
+          const usuariosResult = await Promise.allSettled([solicitar('/usuarios')]);
+          const usuarios = usuariosResult[0].status === 'fulfilled' && Array.isArray(usuariosResult[0].value)
+            ? usuariosResult[0].value : [];
+          const semanaAtras = Date.now() - 7 * 24 * 60 * 60 * 1000;
+          const solicitudesDetenidas = new Set(solicitudes
+            .filter((item) => !['Aprobado', 'Rechazado'].includes(item.estado) &&
+              new Date(item.fecha_radicacion || item.created_at).getTime() <= semanaAtras)
+            .map((item) => item.id));
+          setMetricas([
+            ['Radicaciones', solicitudes.length],
+            ['En evaluación', solicitudes.filter((item) => item.estado === 'En Evaluación').length],
+            ['Pendientes de asignación', solicitudes.filter((item) => !item.evaluador_id && !['Aprobado', 'Rechazado'].includes(item.estado)).length],
+            ['Detenidas · 7 días', solicitudesDetenidas.size],
+            ['Convocatorias activas', activas.length],
+            ['Cierran en 3 días', activas.filter((item) => new Date(item.fecha_cierre) <= Date.now() + 3 * 24 * 60 * 60 * 1000).length],
+            ['Usuarios nuevos · 7 días', usuarios.filter((item) => new Date(item.created_at).getTime() >= semanaAtras).length]
+          ]);
+        } else {
+          setMetricas([
+            ['Mis solicitudes', solicitudes.length],
+            ['En evaluación', solicitudes.filter((item) => item.estado === 'En Evaluación').length],
+            ['Convocatorias abiertas', activas.length],
+            ['Cierran en 3 días', activas.filter((item) => new Date(item.fecha_cierre) <= Date.now() + 3 * 24 * 60 * 60 * 1000).length]
+          ]);
+        }
+      } catch {
+        setMetricas([]);
+      }
+    };
+
+    void cargarMetricas();
+  }, [esAdmin, esEvaluador, usuario?.id]);
 
   // Configuración dinámica de opciones para Convocatorias / Calificaciones
   let opcionesConvocatorias = [];
@@ -82,10 +153,17 @@ const InicioCards = ({ cambiarVista, usuario }) => {
         </p>
       </div>
 
+      {metricas.length > 0 && <section aria-label="Resumen por rol" className="mb-8 grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {metricas.map(([label, value]) => <div key={label} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+          <p className="text-xs font-medium text-slate-500">{label}</p>
+          <p className="mt-1 text-2xl font-bold text-slate-900">{value}</p>
+        </div>)}
+      </section>}
+
       <div className={`grid grid-cols-1 ${esEvaluador ? 'md:grid-cols-2' : 'md:grid-cols-3'} gap-8 group max-w-5xl mx-auto`}>
-        {categorias.map((cat, index) => (
+        {categorias.map((cat) => (
           <div 
-            key={index}
+            key={cat.titulo}
             className={`relative bg-white rounded-3xl border border-slate-100 p-8 flex flex-col justify-between transition-all duration-300 ease-out hover:-translate-y-2.5 shadow-md hover:shadow-2xl ${cat.shadowColor} group-hover:opacity-50 hover:!opacity-100 overflow-hidden`}
           >
             <div className={`absolute -right-10 -top-10 w-32 h-32 rounded-full ${cat.bgGlow} blur-2xl pointer-events-none transition-all duration-300`} />
@@ -100,9 +178,9 @@ const InicioCards = ({ cambiarVista, usuario }) => {
             </div>
 
             <div className="mt-auto pt-6 border-t border-slate-100 flex flex-col gap-2.5">
-              {cat.opciones.map((opc, i) => (
+              {cat.opciones.map((opc) => (
                 <button
-                  key={i}
+                  key={opc.vista}
                   onClick={() => cambiarVista(opc.vista)}
                   className="w-full text-left text-sm font-semibold text-slate-600 hover:text-[#5B9BD5] hover:bg-slate-50/80 px-4 py-3 rounded-2xl transition-all duration-200 border border-transparent hover:border-slate-100 flex items-center justify-between group/btn"
                 >
