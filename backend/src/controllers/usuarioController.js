@@ -31,7 +31,6 @@ const {
 const ROLES_VALIDOS = [
   'Admin',
   'Profesor',
-  'Docente',
   'Evaluador'
 ];
 

@@ -59,6 +59,12 @@ dotenv.config();
 const app =
   express();
 
+// Hostinger coloca un único proxy inverso delante de Node; con 1 salto,
+// req.ip y express-rate-limit usan la IP real del cliente (X-Forwarded-For).
+app.set(
+  'trust proxy',
+  1
+);
 // ============================================================
 // CONFIGURACIÓN CORS
 // ============================================================
@@ -161,6 +167,19 @@ app.use(
 //
 // uploads_private NO se sirve mediante express.static.
 // ============================================================
+
+// Solo /uploads permite carga cross-origin (fotos y bases públicas desde
+// el subdominio del frontend); helmet mantiene same-origin en el resto.
+app.use(
+  '/uploads',
+  (req, res, next) => {
+    res.setHeader(
+      'Cross-Origin-Resource-Policy',
+      'cross-origin'
+    );
+    next();
+  }
+);
 
 app.use(
   '/uploads',

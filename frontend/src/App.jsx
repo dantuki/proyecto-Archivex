@@ -33,6 +33,8 @@ import ReportesAdmin from './components/ReportesAdmin';
 
 import Settings from './components/Settings';
 
+import { API_URL } from './config/api';
+
 import NotificationBell from './components/NotificationBell';
 
 // ============================================================
@@ -128,7 +130,7 @@ function App() {
   useEffect(() => {
     if (!usuario) return;
     const token = localStorage.getItem('token');
-    fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/settings/preferences`, {
+    fetch(`${API_URL}/settings/preferences`, {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then((response) => (response.ok ? response.json() : null))
@@ -180,9 +182,7 @@ function App() {
 
   const esProfesor =
     rolUsuario ===
-      'profesor' ||
-    rolUsuario ===
-      'docente';
+      'profesor';
 
   const puedeUsarChat =
     esAdmin ||
@@ -566,7 +566,7 @@ function App() {
               MIS SOLICITUDES
               ====================================================
               
-              Profesor y Docente usan el mismo módulo.
+              Solo el Profesor usa este módulo.
               ==================================================== */}
 
           {esProfesor && (

@@ -6,9 +6,7 @@ import {
 
 import ReCAPTCHA from 'react-google-recaptcha';
 
-const API_URL =
-  import.meta.env.VITE_API_URL ||
-  'http://localhost:5000/api';
+import { API_URL, RECAPTCHA_SITE_KEY } from '../config/api';
 
 const obtenerIdDispositivo = () => {
   let deviceId = localStorage.getItem('archivex-device-id');
@@ -563,8 +561,8 @@ export default function AuthContainer({
     setMensajeExito('');
     const isDeletion = authFlow === 'confirm-deletion';
     const endpoint = isDeletion
-      ? 'http://localhost:5000/api/settings/account/deletion-confirm'
-      : 'http://localhost:5000/api/settings/email/confirm';
+      ? `${API_URL}/settings/account/deletion-confirm`
+      : `${API_URL}/settings/email/confirm`;
 
     try {
       const response = await fetch(endpoint, {
@@ -952,7 +950,7 @@ export default function AuthContainer({
                     ref={
                       recaptchaRef
                     }
-                    sitekey="6LfwDj4tAAAAANDLp_sh7UeUC1e8sgZ1LUfMBglj"
+                    sitekey={RECAPTCHA_SITE_KEY}
                     onChange={(
                       token
                     ) =>
@@ -1121,7 +1119,7 @@ export default function AuthContainer({
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-blue-500 focus:bg-white transition-all duration-200"
                   >
                     <option value="Profesor">Profesor</option>
-                    <option value="Docente">Docente</option>
+                    <option value="Evaluador">Evaluador</option>
                   </select>
                 </div>
 
@@ -1131,7 +1129,7 @@ export default function AuthContainer({
                     ref={
                       recaptchaRef
                     }
-                    sitekey="6LfwDj4tAAAAANDLp_sh7UeUC1e8sgZ1LUfMBglj"
+                    sitekey={RECAPTCHA_SITE_KEY}
                     onChange={(
                       token
                     ) =>

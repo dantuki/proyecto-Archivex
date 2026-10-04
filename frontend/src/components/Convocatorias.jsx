@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import axios from 'axios';
+import { API_URL } from '../config/api';
 
 const Convocatorias = ({ usuario, convocatoria }) => {
   const [formData, setFormData] = useState({
@@ -74,7 +75,7 @@ const Convocatorias = ({ usuario, convocatoria }) => {
       const token = sessionStorage.getItem('token') || localStorage.getItem('token');
       
       // CORREGIDO: Ahora apunta a '/api/postulaciones/radicar' para coincidir con tu index.js
-      const res = await axios.post('http://localhost:5000/api/postulaciones/radicar', dataToSend, {
+      const res = await axios.post(`${API_URL}/postulaciones/radicar`, dataToSend, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'multipart/form-data'

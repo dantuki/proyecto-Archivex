@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { API_URL } from '../config/api';
 
 const FormularioSolicitud = () => {
   const [formData, setFormData] = useState({
@@ -24,7 +25,7 @@ const FormularioSolicitud = () => {
   useEffect(() => {
     const cargarConvocatorias = async () => {
       try {
-        const response = await axios.get('http://localhost:5000/api/convocatorias');
+        const response = await axios.get(`${API_URL}/convocatorias`);
         if (response.data.status === 'success') {
           setConvocatorias(response.data.data);
         }
@@ -87,7 +88,7 @@ const FormularioSolicitud = () => {
     
     try {
       const token = localStorage.getItem('token');
-      const res = await axios.post('http://localhost:5000/api/solicitudes', dataToSend, {
+      const res = await axios.post(`${API_URL}/solicitudes`, dataToSend, {
         headers: { 
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'multipart/form-data'

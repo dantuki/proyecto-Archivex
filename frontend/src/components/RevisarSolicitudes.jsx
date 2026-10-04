@@ -1,7 +1,9 @@
 import { useState, useEffect, useEffectEvent } from 'react';
 import axios from 'axios';
 
-const API_BASE = 'http://localhost:5000/api';
+import { API_URL, BACKEND_ORIGIN } from '../config/api';
+
+const API_BASE = API_URL;
 
 function obtenerToken() {
   return (
@@ -59,7 +61,7 @@ async function descargarDocumentoSeguro(nombreArchivo) {
       );
 
     window.open(
-      `http://localhost:5000/uploads/${encodeURIComponent(
+      `${BACKEND_ORIGIN}/uploads/${encodeURIComponent(
         nombrePublico
       )}`,
       '_blank',
@@ -807,7 +809,7 @@ function FilaSolicitud({
                 className="w-full p-2 border border-amber-200 rounded-lg text-[11px] focus:ring-2 focus:ring-amber-200 outline-none bg-white text-slate-700 font-medium"
               >
                 <option value="">
-                  -- Elige un docente --
+                  -- Elige un evaluador --
                 </option>
 
                 {evaluadores.map(

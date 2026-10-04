@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { API_URL } from '../config/api';
 
 function ReportesAdmin() {
   const [descargando, setDescargando] = useState(null);
@@ -6,7 +7,7 @@ function ReportesAdmin() {
   const descargarExcel = async (tipoReporte, nombreArchivo) => {
     setDescargando(tipoReporte);
     try {
-      const respuesta = await fetch(`http://localhost:5000/api/reportes/${tipoReporte}`, {
+      const respuesta = await fetch(`${API_URL}/reportes/${tipoReporte}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${sessionStorage.getItem('token') || localStorage.getItem('token')}`

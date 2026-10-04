@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
+import { SOCKET_URL } from '../config/api';
 
 const Chat = ({ usuario }) => {
   const [contactos, setContactos] = useState([]);
@@ -46,7 +47,7 @@ const Chat = ({ usuario }) => {
       return;
     }
 
-    const nuevoSocket = io('http://localhost:5000', {
+    const nuevoSocket = io(SOCKET_URL, {
       auth: {
         token
       },

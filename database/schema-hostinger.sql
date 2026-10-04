@@ -1,56 +1,15 @@
 -- ============================================================
 -- ARCHIVEX
--- ESQUEMA COMPLETO DE BASE DE DATOS
+-- ESQUEMA PARA HOSTINGER (INSTALACION LIMPIA)
 -- ============================================================
 --
--- IMPORTANTE:
--- Este script reconstruye la base de datos desde cero.
---
--- Se utiliza en este momento porque la base está prácticamente
--- vacía y queremos comenzar la nueva evolución de ArchiveX
--- con una estructura consistente.
---
--- NO ejecutar sobre una base con datos importantes sin respaldo.
+-- Importar dentro de una base de datos YA creada desde el panel de
+-- Hostinger (seleccionarla antes de importar). No crea ni elimina bases
+-- de datos, no borra tablas y no requiere privilegios especiales.
+-- Para desarrollo local utilizar schema.sql.
 --
 -- ============================================================
 
-CREATE DATABASE IF NOT EXISTS sinfoni_db
-  CHARACTER SET utf8mb4
-  COLLATE utf8mb4_unicode_ci;
-
-USE sinfoni_db;
-
--- ============================================================
--- 1. LIMPIEZA
--- ============================================================
-
-SET FOREIGN_KEY_CHECKS = 0;
-
-DROP TABLE IF EXISTS login_device_tokens;
-DROP TABLE IF EXISTS trusted_devices;
-DROP TABLE IF EXISTS document_comments;
-DROP TABLE IF EXISTS account_deletion_tokens;
-DROP TABLE IF EXISTS email_change_tokens;
-DROP TABLE IF EXISTS notifications;
-DROP TABLE IF EXISTS login_sessions;
-DROP TABLE IF EXISTS user_preferences;
-DROP TABLE IF EXISTS password_reset_tokens;
-DROP TABLE IF EXISTS email_verification_tokens;
-DROP TABLE IF EXISTS documentos_solicitud;
-DROP TABLE IF EXISTS noticias;
-DROP TABLE IF EXISTS login;
-DROP TABLE IF EXISTS trazabilidad_solicitudes;
-DROP TABLE IF EXISTS asignacion_evaluaciones;
-DROP TABLE IF EXISTS solicitudes;
-DROP TABLE IF EXISTS convocatorias;
-DROP TABLE IF EXISTS usuarios;
-DROP TABLE IF EXISTS sedes;
-DROP TABLE IF EXISTS participaciones;
-DROP TABLE IF EXISTS documentos_proyecto;
-DROP TABLE IF EXISTS proyectos_participantes;
-DROP TABLE IF EXISTS proyectos;
-
-SET FOREIGN_KEY_CHECKS = 1;
 
 -- ============================================================
 -- 2. TABLA: SEDES
@@ -890,6 +849,20 @@ CREATE TABLE document_comments (
   CONSTRAINT fk_document_comments_usuario FOREIGN KEY (usuario_id)
     REFERENCES usuarios(id) ON DELETE RESTRICT ON UPDATE CASCADE,
   INDEX idx_document_comments_documento (documento_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 19b. MENSAJES DE CHAT
+-- ============================================================
+
+CREATE TABLE chat_mensajes (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  remitente_id INT NOT NULL,
+  destinatario_id INT NOT NULL,
+  mensaje TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (remitente_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+  FOREIGN KEY (destinatario_id) REFERENCES usuarios(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================

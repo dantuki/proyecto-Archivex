@@ -617,7 +617,7 @@ const anonimizarCuentaVencidaPorId = async (id) => {
     await connection.query(
       `UPDATE usuarios SET nombre_completo = 'Cuenta eliminada', email = ?, cedula = ?,
        telefono = NULL, direccion = NULL, foto_url = NULL, nivel_educativo = NULL,
-       carrera_titulo = NULL, certificado_url = NULL, password = ?, rol = 'Docente',
+       carrera_titulo = NULL, certificado_url = NULL, password = ?,
        correo_verificado = FALSE, correo_verificado_at = NULL, account_status = 'disabled'
        WHERE id = ?`,
       [email, cedula, password, id]

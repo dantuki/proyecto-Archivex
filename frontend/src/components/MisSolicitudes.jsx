@@ -1,7 +1,9 @@
 import { useState, useEffect, useEffectEvent } from 'react';
 import axios from 'axios';
 
-const API_BASE = 'http://localhost:5000/api';
+import { API_URL, BACKEND_ORIGIN } from '../config/api';
+
+const API_BASE = API_URL;
 
 function MisSolicitudes() {
   const [solicitudes, setSolicitudes] = useState([]);
@@ -72,7 +74,7 @@ function MisSolicitudes() {
     if (!archivoUrl) return;
     const ruta = archivoUrl.startsWith('/') ? archivoUrl : `/${archivoUrl}`;
     if (!ruta.includes('/uploads_private/')) {
-      window.open(`http://localhost:5000${ruta}`, '_blank', 'noopener,noreferrer');
+      window.open(`${BACKEND_ORIGIN}${ruta}`, '_blank', 'noopener,noreferrer');
       return;
     }
 

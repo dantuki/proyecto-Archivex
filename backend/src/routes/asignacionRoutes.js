@@ -43,7 +43,7 @@ router.use(verificarToken);
 // EVALUADOR:
 // Puede consultar sus propias asignaciones.
 //
-// DOCENTE:
+// PROFESOR:
 // No recibe acceso administrativo a las asignaciones.
 // ============================================================
 
