@@ -57,7 +57,7 @@ const Usuario = {
     return result.insertId;
   },
 
-  update: async (id, data) => {
+  update: async (id, data, executor = db) => {
     const fields = [];
     const values = [];
     
@@ -77,8 +77,33 @@ const Usuario = {
     if (fields.length === 0) return 0; 
     values.push(id); 
 
-    const [result] = await db.query(
+    const [result] = await executor.query(
       `UPDATE usuarios SET ${fields.join(', ')} WHERE id = ?`,
+      values
+    );
+    return result.affectedRows;
+  },
+
+  // El hash vive en usuarios y login; ambos se actualizan juntos sobre la misma conexión.
+  syncLogin: async (id, { email, password }, executor = db) => {
+    const fields = [];
+    const values = [];
+
+    if (email !== undefined) {
+      fields.push('email = ?');
+      values.push(email);
+    }
+
+    if (password !== undefined) {
+      fields.push('password = ?');
+      values.push(password);
+    }
+
+    if (fields.length === 0) return 0;
+    values.push(id);
+
+    const [result] = await executor.query(
+      `UPDATE login SET ${fields.join(', ')} WHERE usuario_id = ?`,
       values
     );
     return result.affectedRows;

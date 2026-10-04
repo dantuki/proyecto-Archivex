@@ -17,8 +17,9 @@ ArchiveX es una aplicación institucional para gestionar convocatorias académic
 
 ## Base de datos
 
-- `database/schema.sql`: solo para desarrollo local. Crea `sinfoni_db`, elimina y vuelve a crear las tablas y carga las sedes iniciales.
-- `database/schema-hostinger.sql`: para Hostinger. Se importa dentro de una base ya creada desde el panel; no usa `CREATE DATABASE`, `USE`, `DROP` ni privilegios especiales. Incluye todas las tablas (también `chat_mensajes`) y las sedes iniciales. Importarlo una sola vez sobre una base vacía.
+- `database/schema-hostinger.sql`: **esquema oficial y definitivo de producción** para una instalación nueva en Hostinger. Se importa una sola vez dentro de una base **vacía** ya creada desde el panel; no usa `CREATE DATABASE`, `USE`, `DROP`, `GRANT`, `DEFINER`, triggers ni procedimientos. Incluye todas las tablas (también `chat_mensajes`), índices, claves foráneas y constraints, el ENUM de rol `Admin`/`Profesor`/`Evaluador` y, como único dato inicial, las sedes. No crea usuarios: el Admin se provisiona con `createAdmin.js` (ver Roles y seguridad).
+- `database/schema.sql`: solo para desarrollo local. Tiene exactamente la misma estructura de tablas que `schema-hostinger.sql`; se diferencia únicamente por crear `sinfoni_db` y eliminar/recrear las tablas antes de importarlas.
+- `database/migrations/`: solo para bases antiguas ya existentes. **No se ejecutan sobre una instalación nueva** hecha con cualquiera de los dos esquemas.
 
 Para una instalación local desde cero, ejecuta `database/schema.sql` contra una base de desarrollo vacía:
 
@@ -33,7 +34,7 @@ Para una base existente, conserva una copia de seguridad y aplica en orden las m
 1. `20261001_email_auth.sql`
 2. `20261001_user_experience.sql`
 3. `20261001_experience_completion.sql`
-4. `20261004_remove_docente_role.sql` (convierte usuarios `Docente` en `Profesor` y deja el rol como `Admin`, `Profesor`, `Evaluador`)
+4. `20261004_remove_docente_role.sql` (solo para bases antiguas con el rol `Docente`: haz un backup, ejecuta la migración y los usuarios `Docente` pasan a `Profesor`; el ENUM queda `Admin`, `Profesor`, `Evaluador`)
 
 No apliques migraciones que ya estén reflejadas en la base.
 
@@ -101,6 +102,7 @@ Este comando envía un mensaje real a la cuenta configurada en `MAIL_USER`.
 - Los tokens de verificación y recuperación se almacenan como hashes, tienen vencimiento y son de un solo uso.
 - Las solicitudes de eliminación requieren contraseña y confirmación por correo. A los 30 días el proceso anonimiza la cuenta y conserva solicitudes y trazabilidad institucional.
 - Los directorios `backend/uploads/` y `backend/uploads_private/` contienen archivos locales y no deben añadirse a Git.
+- La foto de perfil y las bases de convocatorias son públicas (`/uploads`). El certificado del perfil, los soportes de noticias, los documentos de solicitudes y las actas de evaluación son privados: nunca se sirven como estáticos y solo se obtienen con el JWT desde `GET /api/archivos-privados/:archivo`, que localiza el archivo en la base de datos y valida propietario, evaluador asignado o Admin.
 
 ## Funcionalidades
 
@@ -142,4 +144,4 @@ npm run build
 npm run lint
 ```
 
-Backend: desde `backend`, usa `node --check` sobre los archivos JavaScript de `src/`. No hay una suite automatizada de pruebas backend configurada actualmente.
+Backend: desde `backend`, usa `node --check` sobre los archivos JavaScript modificados. `npm test` recrea la base aislada `archivex_final_test` (nunca `sinfoni_db`) desde `schema-hostinger.sql`, provisiona un Admin de prueba con `createAdmin.js` y ejecuta las pruebas de `backend/tests/` con el runner nativo de Node. Requiere MySQL local con las credenciales de `backend/.env`; el SMTP y reCAPTCHA reales no se usan.

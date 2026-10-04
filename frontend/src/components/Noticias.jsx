@@ -1,5 +1,6 @@
 import { useState, useEffect, useEffectEvent } from 'react';
-import { API_URL, BACKEND_ORIGIN } from '../config/api';
+import { API_URL } from '../config/api';
+import { abrirArchivoPrivado } from '../utils/archivosPrivados';
 
 export default function Noticias({ onVolver }) {
   const [noticias, setNoticias] = useState([]);
@@ -54,6 +55,14 @@ export default function Noticias({ onVolver }) {
 
   const toggleExpandir = (id) => {
     setExpandidoId(expandidoId === id ? null : id);
+  };
+
+  const verSoporte = async (archivoUrl) => {
+    try {
+      await abrirArchivoPrivado(archivoUrl);
+    } catch (err) {
+      alert(err.message || 'No se pudo abrir el soporte adjunto.');
+    }
   };
 
   const abrirCrear = () => {
@@ -214,14 +223,13 @@ export default function Noticias({ onVolver }) {
                             )}
                             {item.archivo_url && (
                               <div className="pt-1">
-                                <a 
-                                  href={`${BACKEND_ORIGIN}${item.archivo_url}`}
-                                  target="_blank" 
-                                  rel="noreferrer"
+                                <button
+                                  type="button"
+                                  onClick={() => verSoporte(item.archivo_url)}
                                   className="inline-flex items-center gap-1.5 text-[11px] bg-blue-50 text-blue-700 hover:bg-blue-100 px-2.5 py-1 rounded-lg font-bold transition-colors border border-blue-100 shadow-sm"
                                 >
                                   📎 Ver Soporte Adjunto
-                                </a>
+                                </button>
                               </div>
                             )}
                           </div>
