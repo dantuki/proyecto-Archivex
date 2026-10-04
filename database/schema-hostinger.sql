@@ -1,12 +1,20 @@
 -- ============================================================
 -- ARCHIVEX
--- ESQUEMA PARA HOSTINGER (INSTALACION LIMPIA)
+-- ESQUEMA OFICIAL Y DEFINITIVO PARA UNA INSTALACION NUEVA EN HOSTINGER
 -- ============================================================
 --
--- Importar dentro de una base de datos YA creada desde el panel de
--- Hostinger (seleccionarla antes de importar). No crea ni elimina bases
--- de datos, no borra tablas y no requiere privilegios especiales.
--- Para desarrollo local utilizar schema.sql.
+-- Importar UNA sola vez dentro de una base de datos VACIA y ya creada
+-- desde el panel de Hostinger (seleccionarla antes de importar).
+-- No crea ni elimina bases de datos, no borra tablas ni datos y no
+-- requiere privilegios especiales (GRANT, SUPER, DEFINER, triggers).
+--
+-- Roles: Admin, Profesor y Evaluador. No se crea ningun usuario:
+-- el Admin se provisiona con backend/src/scripts/createAdmin.js.
+-- Datos iniciales: unicamente las sedes.
+--
+-- Para desarrollo local utilizar schema.sql (misma estructura).
+-- La migracion 20261004_remove_docente_role.sql es solo para bases
+-- antiguas; NO se ejecuta sobre una instalacion hecha con este archivo.
 --
 -- ============================================================
 
@@ -42,8 +50,8 @@ CREATE TABLE sedes (
 --
 -- 3. Ningún otro correo puede tener rol Admin.
 --
--- 4. El registro público NO depende de esta tabla para decidir
---    el rol, el backend fuerza Profesor.
+-- 4. El registro publico solo admite Profesor y Evaluador; el
+--    backend valida el rol (el Admin se crea con createAdmin.js).
 --
 -- 5. La contraseña permanece hasheada.
 -- ============================================================

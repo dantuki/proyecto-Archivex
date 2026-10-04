@@ -1018,6 +1018,8 @@ const updateUsuario =
     res
   ) => {
     const archivosNuevos = [];
+    let conexion = null;
+    let confirmado = false;
 
     if (
       req.files?.foto?.[0]
@@ -1613,19 +1615,50 @@ const updateUsuario =
       }
 
       // ------------------------------------------------------
-      // ACTUALIZAR USUARIO
+      // ACTUALIZAR USUARIO Y LOGIN EN UNA TRANSACCIÓN
       // ------------------------------------------------------
+      //
+      // Solo se sincronizan con login los campos realmente
+      // enviados (email y/o hash de la nueva contraseña); si no
+      // cambian, login.password no se toca.
+      // ------------------------------------------------------
+
+      const datosLogin = {};
+
+      if (
+        datosActualizar.email !==
+        undefined
+      ) {
+        datosLogin.email =
+          datosActualizar.email;
+      }
+
+      if (
+        datosActualizar.password !==
+        undefined
+      ) {
+        datosLogin.password =
+          datosActualizar.password;
+      }
+
+      conexion =
+        await pool.getConnection();
+
+      await conexion.beginTransaction();
 
       const affectedRows =
         await Usuario.update(
           id,
-          datosActualizar
+          datosActualizar,
+          conexion
         );
 
       if (
         affectedRows ===
         0
       ) {
+        await conexion.rollback();
+
         await limpiarArchivosNuevos();
 
         return res.status(404).json({
@@ -1636,42 +1669,16 @@ const updateUsuario =
         });
       }
 
-      // ------------------------------------------------------
-      // SINCRONIZAR LOGIN
-      // ------------------------------------------------------
+      await Usuario.syncLogin(
+        id,
+        datosLogin,
+        conexion
+      );
 
-      if (
-        datosActualizar.email ||
-        datosActualizar.password
-      ) {
-        const usuarioActualizado =
-          await Usuario.getById(
-            id
-          );
+      await conexion.commit();
 
-        if (
-          !usuarioActualizado
-        ) {
-          throw new Error(
-            'El usuario actualizado no fue encontrado.'
-          );
-        }
-
-        await pool.query(
-          `
-            UPDATE login
-            SET
-              email = ?,
-              password = ?
-            WHERE usuario_id = ?
-          `,
-          [
-            usuarioActualizado.email,
-            usuarioActualizado.password,
-            id
-          ]
-        );
-      }
+      confirmado =
+        true;
 
       // ------------------------------------------------------
       // ELIMINAR ARCHIVOS ANTERIORES
@@ -1716,14 +1723,43 @@ const updateUsuario =
         )
       );
 
+      const usuarioFinal =
+        await Usuario.getById(
+          id
+        );
+
       return res.status(200).json({
         status:
           'success',
         message:
-          'Usuario actualizado correctamente.'
+          'Usuario actualizado correctamente.',
+        data:
+          usuarioSeguro(
+            usuarioFinal
+          )
       });
     } catch (error) {
-      await limpiarArchivosNuevos();
+      if (
+        conexion
+      ) {
+        try {
+          await conexion.rollback();
+        } catch (
+          rollbackError
+        ) {
+          console.error(
+            'Error en rollback de actualización de usuario:',
+            rollbackError.message
+          );
+        }
+      }
+
+      // Tras el commit, los archivos nuevos ya están referenciados en la BD.
+      if (
+        !confirmado
+      ) {
+        await limpiarArchivosNuevos();
+      }
 
       console.error(
         'Error al actualizar usuario:',
@@ -1762,6 +1798,12 @@ const updateUsuario =
             ? error.message
             : 'Error al actualizar el usuario.'
       });
+    } finally {
+      if (
+        conexion
+      ) {
+        conexion.release();
+      }
     }
   };
 

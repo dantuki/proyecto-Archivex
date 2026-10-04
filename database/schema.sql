@@ -1,10 +1,15 @@
 -- ============================================================
 -- ARCHIVEX
--- ESQUEMA COMPLETO DE BASE DE DATOS
+-- ESQUEMA COMPLETO DE BASE DE DATOS (SOLO DESARROLLO LOCAL)
 -- ============================================================
 --
 -- IMPORTANTE:
--- Este script reconstruye la base de datos desde cero.
+-- Este script reconstruye la base de datos local desde cero
+-- (CREATE DATABASE, USE y DROP TABLE). NO es el esquema de
+-- produccion: para Hostinger usar database/schema-hostinger.sql.
+--
+-- La estructura de tablas es identica a schema-hostinger.sql; solo
+-- cambian la cabecera y la limpieza inicial (DROP TABLE).
 --
 -- Se utiliza en este momento porque la base está prácticamente
 -- vacía y queremos comenzar la nueva evolución de ArchiveX
@@ -26,6 +31,7 @@ USE sinfoni_db;
 
 SET FOREIGN_KEY_CHECKS = 0;
 
+DROP TABLE IF EXISTS chat_mensajes;
 DROP TABLE IF EXISTS login_device_tokens;
 DROP TABLE IF EXISTS trusted_devices;
 DROP TABLE IF EXISTS document_comments;
@@ -83,8 +89,8 @@ CREATE TABLE sedes (
 --
 -- 3. Ningún otro correo puede tener rol Admin.
 --
--- 4. El registro público NO depende de esta tabla para decidir
---    el rol, el backend fuerza Profesor.
+-- 4. El registro público solo admite Profesor y Evaluador; el
+--    backend valida el rol (el Admin se crea con createAdmin.js).
 --
 -- 5. La contraseña permanece hasheada.
 -- ============================================================
@@ -890,6 +896,20 @@ CREATE TABLE document_comments (
   CONSTRAINT fk_document_comments_usuario FOREIGN KEY (usuario_id)
     REFERENCES usuarios(id) ON DELETE RESTRICT ON UPDATE CASCADE,
   INDEX idx_document_comments_documento (documento_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 19b. MENSAJES DE CHAT
+-- ============================================================
+
+CREATE TABLE chat_mensajes (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  remitente_id INT NOT NULL,
+  destinatario_id INT NOT NULL,
+  mensaje TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (remitente_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+  FOREIGN KEY (destinatario_id) REFERENCES usuarios(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================

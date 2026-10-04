@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { API_URL, BACKEND_ORIGIN } from '../config/api';
+import { abrirArchivoPrivado } from '../utils/archivosPrivados';
 
 // CORRECCIÓN: Recibimos la prop 'usuario' de la sesión activa para validar identidades de forma cruzada
 export default function DatosPersonales({ usuario }) {
@@ -90,6 +91,7 @@ export default function DatosPersonales({ usuario }) {
     const file = e.target.files[0];
     if (!file) return;
     setArchivoFoto(file);
+    if (vistaPreviaFoto) URL.revokeObjectURL(vistaPreviaFoto);
     setVistaPreviaFoto(URL.createObjectURL(file));
   };
 
@@ -122,7 +124,7 @@ export default function DatosPersonales({ usuario }) {
       const resJson = await response.json();
 
       if (!response.ok) {
-        setError(resJson.error || 'Error al guardar el perfil.');
+        setError(resJson.message || resJson.error || 'Error al guardar el perfil.');
         return;
       }
 
@@ -138,6 +140,7 @@ export default function DatosPersonales({ usuario }) {
       setIsEditing(false);
       setArchivoFoto(null);
       setArchivoCertificado(null);
+      if (vistaPreviaFoto) URL.revokeObjectURL(vistaPreviaFoto);
       setVistaPreviaFoto('');
       setTimeout(() => setMensajeExito(''), 4000);
     } catch {
@@ -147,6 +150,15 @@ export default function DatosPersonales({ usuario }) {
 
   const ejecutarImpresion = () => {
     window.print();
+  };
+
+  const verCertificado = async () => {
+    try {
+      setError('');
+      await abrirArchivoPrivado(certificadoUrl);
+    } catch (err) {
+      setError(err.message || 'No se pudo abrir el certificado.');
+    }
   };
 
   const formatearFechaVisual = (fechaStr) => {
@@ -369,14 +381,13 @@ export default function DatosPersonales({ usuario }) {
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Certificado Vigente (PDF)</label>
               <div className="flex flex-wrap items-center gap-4 mt-1">
                 {certificadoUrl && (
-                  <a 
-                    href={`${BACKEND_ORIGIN}${certificadoUrl}`}
-                    target="_blank" 
-                    rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={verCertificado}
                     className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200 transition-colors inline-flex items-center gap-1.5"
                   >
                     📄 Ver Soporte PDF
-                  </a>
+                  </button>
                 )}
                 {isEditing && (
                   <input 
@@ -399,6 +410,7 @@ export default function DatosPersonales({ usuario }) {
                     setIsEditing(false);
                     setArchivoFoto(null);
                     setArchivoCertificado(null);
+                    if (vistaPreviaFoto) URL.revokeObjectURL(vistaPreviaFoto);
                     setVistaPreviaFoto('');
                   }}
                   className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold text-xs rounded-xl"
