@@ -685,10 +685,7 @@ exports.getReporteSedesDemografia =
           ON s.sede_id =
              sd.id
 
-        WHERE u.rol IN (
-          'Docente',
-          'Profesor'
-        )
+        WHERE u.rol = 'Profesor'
 
         GROUP BY
           sd.nombre_sede,

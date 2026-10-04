@@ -108,7 +108,6 @@ CREATE TABLE usuarios (
   rol ENUM(
     'Admin',
     'Profesor',
-    'Docente',
     'Evaluador'
   )
     NOT NULL

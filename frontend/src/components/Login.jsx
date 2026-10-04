@@ -1119,7 +1119,6 @@ export default function AuthContainer({
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-blue-500 focus:bg-white transition-all duration-200"
                   >
                     <option value="Profesor">Profesor</option>
-                    <option value="Docente">Docente</option>
                     <option value="Evaluador">Evaluador</option>
                   </select>
                 </div>

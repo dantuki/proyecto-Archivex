@@ -182,9 +182,7 @@ function App() {
 
   const esProfesor =
     rolUsuario ===
-      'profesor' ||
-    rolUsuario ===
-      'docente';
+      'profesor';
 
   const puedeUsarChat =
     esAdmin ||
@@ -568,7 +566,7 @@ function App() {
               MIS SOLICITUDES
               ====================================================
               
-              Profesor y Docente usan el mismo módulo.
+              Solo el Profesor usa este módulo.
               ==================================================== */}
 
           {esProfesor && (

@@ -33,6 +33,7 @@ Para una base existente, conserva una copia de seguridad y aplica en orden las m
 1. `20261001_email_auth.sql`
 2. `20261001_user_experience.sql`
 3. `20261001_experience_completion.sql`
+4. `20261004_remove_docente_role.sql` (convierte usuarios `Docente` en `Profesor` y deja el rol como `Admin`, `Profesor`, `Evaluador`)
 
 No apliques migraciones que ya estén reflejadas en la base.
 
@@ -93,7 +94,7 @@ Este comando envía un mensaje real a la cuenta configurada en `MAIL_USER`.
 ## Roles y seguridad
 
 - El correo reservado para el único Administrador es `aracelly.buitrago@campusucc.edu.co`.
-- El registro público solo admite `Profesor`, `Docente` y `Evaluador`; nunca puede crear un Administrador.
+- El registro público solo admite `Profesor` y `Evaluador`; nunca puede crear un Administrador. Los roles oficiales son `Admin`, `Profesor` y `Evaluador`.
 - Después de crear la base vacía, provisiona el Admin desde `backend` con `node src/scripts/createAdmin.js`. El script usa el correo reservado y solicita el nombre y la contraseña durante la ejecución; no guardes la contraseña en el repositorio.
 - Las cuentas nuevas deben verificar su correo antes del primer acceso.
 - Los inicios de sesión desde un dispositivo o una IP no confiables requieren confirmación por correo.
@@ -108,7 +109,7 @@ Este comando envía un mensaje real a la cuenta configurada en `MAIL_USER`.
 - Historial de sesiones, cambio de contraseña, cierre de sesiones y cambio verificado de correo.
 - Notificaciones internas y por correo para actividad de solicitudes, documentos, evaluaciones y convocatorias.
 - Seguimiento cronológico de postulaciones, revisión y comentarios de documentos, previsualización privada y versiones reemplazadas.
-- Dashboard con métricas disponibles para Admin, Evaluador, Profesor y Docente.
+- Dashboard con métricas disponibles para Admin, Evaluador y Profesor.
 
 ## Despliegue en Hostinger
 

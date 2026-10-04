@@ -496,7 +496,6 @@ const register =
 
       const rolesPublicos = [
         'Profesor',
-        'Docente',
         'Evaluador'
       ];
 
