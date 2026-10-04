@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "verify:mail": "node src/scripts/verifyMail.js"
+    "verify:mail": "node src/scripts/verifyMail.js",
+    "test": "node tests/setup-db.js && node --test --test-concurrency=1 \"tests/**/*.test.js\""
   },
   "keywords": [],
   "author": "",
